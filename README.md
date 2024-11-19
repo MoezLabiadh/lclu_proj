@@ -1,2 +1,2 @@
 # lclu_proj
-GeoBC-DSS Land Cover Classification project
+Scripts for the GeoBC-DSS Land Cover Classification project
