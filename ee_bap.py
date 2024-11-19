@@ -48,71 +48,56 @@ def gdf_to_ee_geometry(gdf):
 
 
 def add_distance_score(image):
-    """
-    Caluclates and adds a Distance-to-Cloud Score.
-
-    """
     cloud_mask = image.select('MSK_CLDPRB').gt(60)  # Cloud probability > 60%
-    
-    # Calulcate the Manhatten distance. Convert to meters
-    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20) 
-    
-    # Set the score as function of distance
+    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
     distance_score = distance.expression(
         'distance > 150 ? 1 : exp(-0.5 * pow((distance / 50), 2))', {'distance': distance}
     )
-    return image.addBands(distance_score.rename('DistanceScore'))
+    
+    return image.addBands(distance_score.rename('DistanceScore').toFloat())
 
 
 
 def add_coverage_score(image, aoi):
-    """
-    Caluclates and adds a Coverage Score
-    """
-    # Create a cloud mask using MSK_CLDPRB
-    cloud_mask = image.select('MSK_CLDPRB').gt(60)  # Cloud probability > 60%
-    
-    # Reduce region with maxPixels and bestEffort
+    cloud_mask = image.select('MSK_CLDPRB').gt(50)
     cloud_percentage = cloud_mask.reduceRegion(
         reducer=ee.Reducer.mean(),
         geometry=aoi,
         scale=20,
-        maxPixels=1e10,  # Increased maxPixels
-        bestEffort=True  # Allow scale adjustment
+        maxPixels=1e10,
+        bestEffort=True
     ).get('MSK_CLDPRB')
-    
-    # Compute the Coverage Score
-    coverage_score = ee.Number(1).subtract(ee.Number(cloud_percentage))
-    return image.set('CoverageScore', coverage_score)
 
+    # Inverse cloud percentage with exponential decay
+    coverage_score = ee.Number(1).subtract(ee.Number(cloud_percentage)).max(0.1)  # Minimum score = 0.1
+    coverage_band = ee.Image.constant(coverage_score).rename('CoverageScore').toFloat()
 
+    return image.addBands(coverage_band)
 
 
 def add_date_score(image, target_date):
-    """
-    Caluclates and adds a Date Score based on proximity to the target date
-    """
-
     target = ee.Date(target_date)
     date_diff = image.date().difference(target, 'day').abs()
     date_score = date_diff.expression(
         'exp(-0.5 * pow((days / 15), 2))', {'days': date_diff}
     )
-    return image.set('DateScore', date_score)
+    date_band = ee.Image.constant(date_score).rename('DateScore').toFloat()
+    
+    return image.addBands(date_band)
 
 
 
-def create_bap_composite(aoi, target_date, cloud_pct):
+def process_collection(aoi, target_date, cloud_pct):
     """
-    Create a BAP composite image based on a target date.
+    Applies the BAP scores to the S2 collection.
     The time window is set to 45 days before and after the target date.
     """
     # Convert target_date to an Earth Engine date
     target = ee.Date(target_date)
     
-    # Calculate start_date and end_date as 45 days before and after the target_date
-    start_date = target.advance(-45, 'day')
-    end_date = target.advance(45, 'day')
+    # Calculate start_date and end_date as 90 days before and after the target_date
+    start_date = target.advance(-90, 'day')
+    end_date = target.advance(90, 'day')
 
     # Load Sentinel-2 SR imagery
     collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
@@ -125,30 +110,24 @@ def create_bap_composite(aoi, target_date, cloud_pct):
         
         
     # Add a total qualityscore to the S2 collection 
-    def add_quality_score(img):
-
-        '''
-        quality_score = img.expression(
-            'DistanceScore * CoverageScore * DateScore',
-            {
-                'DistanceScore': img.select('DistanceScore'),
-                'CoverageScore': img.get('CoverageScore'),
-                'DateScore': img.get('DateScore')
-            }
-        )
-        '''
-        
-        distance_score = img.select('DistanceScore')
-        coverage_score = ee.Number(img.get('CoverageScore'))
-        date_score = ee.Number(img.get('DateScore'))
-        
+    def add_quality_score(image):
+        distance_score = image.select('DistanceScore')
+        coverage_score = image.select('CoverageScore')
+        date_score = image.select('DateScore')
         quality_score = distance_score.multiply(coverage_score).multiply(date_score)
         
-        return img.addBands(quality_score.rename('QualityScore'))
+        return image.addBands(quality_score.rename('QualityScore').toFloat())
 
     collection = collection.map(add_quality_score)
+    
+    return collection
 
+
+
+def create_bap_composite(collection):
+    """
     # Use quality mosaic to create the BAP composite
+    """
     composite = collection.qualityMosaic('QualityScore')
     
     return composite
@@ -171,7 +150,7 @@ def export_composite_to_drive(composite, region, description, folder):
     
 
 
-def export_geotiff(image, aoi, outpath, bands=None):
+def export_geotiff(image, aoi, outpath, bands=None, res=20):
     """
     Exports the selected bands of an ee.image to a geotiff file.
     """
@@ -188,7 +167,7 @@ def export_geotiff(image, aoi, outpath, bands=None):
     image_array = geemap.ee_to_numpy(
         image, 
         region=aoi, 
-        scale=20  # 20m resolution
+        scale=res # spatial resolution in meters
     )
 
     # Get the projection
@@ -230,19 +209,21 @@ if __name__ == '__main__':
     wks= r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     
     #initialize ee with a service account key
+    print ('Connecting to Earth Engine')
     try:
         service_account = 'lclu-942@ee-lclu-bc.iam.gserviceaccount.com'
         pkey= os.path.join(wks, 'work', 'ee-lclu-bc-b2fb2131d77b.json')
         credentials = ee.ServiceAccountCredentials(service_account, pkey)
     
         ee.Initialize(credentials)
-        print('EE initialized successfully!')
+        print('..EE initialized successfully!')
         
     except ee.EEException as e:
-        print("Unexpected error:", e)
+        print("..Unexpected error:", e)
  
     
     # Define area of interest as a GeoPandas GeoDataFrame
+    print ('\nReading the Area of Interest')
     # Sample AOI
     coordinates = [
         [-123.9852, 49.1399],
@@ -260,6 +241,8 @@ if __name__ == '__main__':
     gdf = gpd.GeoDataFrame(data, geometry='geometry', crs="EPSG:4326")
     aoi = gdf_to_ee_geometry(gdf)
 
+
+    print ('\nComputing the BAP Composite')
     # Define the target date
     target_date = '2024-08-15'
     
@@ -267,12 +250,16 @@ if __name__ == '__main__':
     cloud_pct= 30
 
     # Create the BAP composite
-    bap_composite = create_bap_composite(
+    collection = process_collection(
         aoi, 
         target_date, 
         cloud_pct
     )
     
+    bap_composite= create_bap_composite(collection)
+    
+    
+    print ('\nExporting the BAP Composite to geotiff file')
     #Export the BAP composite
     bands= ['B2', 'B3', 'B4', 'B8A']
     filename= 'test_composite_vis_nir.tif'
@@ -284,7 +271,7 @@ if __name__ == '__main__':
     )
 
     '''
-    # Visualize the composite
+    # Visualize the composite. Works in Notebook only!!
     Map = geemap.Map()
     Map.addLayer(bap_composite, {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 3000}, 'BAP Composite')
     Map.centerObject(aoi)
