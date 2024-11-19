@@ -5,11 +5,28 @@ using Sentinel-2 imagery in Earth Engine (EE).
 Based on White et al. (2014), Pixel-Based Image Compositing for Large-Area Dense 
  Time Series Applications and Science -
  https://www.tandfonline.com/doi/full/10.1080/07038992.2014.945827 
-                              
-The scoring functions rank each S2 pixel observation for: 
+  
+                            
+The scoring functions rank each S2 pixel for: 
+    
     (i) proximity to the target date, 
+            Quantifies how close the image's date is to a specified target_date, 
+            with higher scores given to images taken nearer the target date.
+            A Gaussian-like decay function assigns the DateScore.
+            
+ 
     (ii) cloud cover in the scene, 
+            is calculated as a measure of how cloud-free the image is over the 
+            specified area of interest (aoi).
+            
     (iii) distance to clouds
+            If the distance from cloudy pixels is greater than 150 meters, the score is set to 1, 
+            indicating the pixel is sufficiently far from clouds.
+            If the distance is less than or equal to 150 meters, 
+            a Gaussian-like decay function assigns a score based on proximity.
+    
+    
+Author: Moez Labiadh    
 """
 
 import os
@@ -32,10 +49,15 @@ def gdf_to_ee_geometry(gdf):
 
 def add_distance_score(image):
     """
-    Caluclates and adds a Distance-to-Cloud Score
+    Caluclates and adds a Distance-to-Cloud Score.
+
     """
     cloud_mask = image.select('MSK_CLDPRB').gt(60)  # Cloud probability > 60%
-    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)  # Convert to meters
+    
+    # Calulcate the Manhatten distance. Convert to meters
+    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20) 
+    
+    # Set the score as function of distance
     distance_score = distance.expression(
         'distance > 150 ? 1 : exp(-0.5 * pow((distance / 50), 2))', {'distance': distance}
     )
@@ -80,19 +102,23 @@ def add_date_score(image, target_date):
 
 
 
-def create_bap_composite(aoi, start_date, end_date):
+def create_bap_composite(aoi, target_date, cloud_pct):
     """
-    Create a BAP composite image
+    Create a BAP composite image based on a target date.
+    The time window is set to 45 days before and after the target date.
     """
-    # Set the target date to the median of start_date and end_date
-    start = ee.Date(start_date)
-    end = ee.Date(end_date)
-    target_date = start.advance(end.difference(start, 'day').divide(2), 'day')
+    # Convert target_date to an Earth Engine date
+    target = ee.Date(target_date)
+    
+    # Calculate start_date and end_date as 45 days before and after the target_date
+    start_date = target.advance(-45, 'day')
+    end_date = target.advance(45, 'day')
 
     # Load Sentinel-2 SR imagery
     collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterBounds(aoi) \
         .filterDate(start_date, end_date) \
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_pct)) \
         .map(lambda img: add_distance_score(img)) \
         .map(lambda img: add_coverage_score(img, aoi)) \
         .map(lambda img: add_date_score(img, target_date))
@@ -234,12 +260,18 @@ if __name__ == '__main__':
     gdf = gpd.GeoDataFrame(data, geometry='geometry', crs="EPSG:4326")
     aoi = gdf_to_ee_geometry(gdf)
 
-    # Define the time range
-    start_date = '2024-07-01'
-    end_date = '2024-09-30'
+    # Define the target date
+    target_date = '2024-08-15'
+    
+    # Set the max Cloud percentage
+    cloud_pct= 30
 
     # Create the BAP composite
-    bap_composite = create_bap_composite(aoi, start_date, end_date)
+    bap_composite = create_bap_composite(
+        aoi, 
+        target_date, 
+        cloud_pct
+    )
     
     #Export the BAP composite
     bands= ['B2', 'B3', 'B4', 'B8A']
