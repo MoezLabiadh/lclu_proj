@@ -10,7 +10,7 @@ import geopandas as gpd
 from shapely.geometry import Point
 from scipy.ndimage import binary_erosion
 
-def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_border=100):
+def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edge=100):
     """
     Generates random points covering each class/value of a spatial raster
 
@@ -30,8 +30,8 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_bor
         pixel_size = (transform[0], -transform[4])  # (width, height) of a pixel in meters
 
         # Calculate buffer in pixels
-        buffer_pixels_x = int(dist_from_border / pixel_size[0])
-        buffer_pixels_y = int(dist_from_border / pixel_size[1])
+        buffer_pixels_x = int(dist_from_edge / pixel_size[0])
+        buffer_pixels_y = int(dist_from_edge / pixel_size[1])
 
         # Identify unique categories/values, ignoring no-data values
         unique_values = np.unique(data[data != src.nodata])
