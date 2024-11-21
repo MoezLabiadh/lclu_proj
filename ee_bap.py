@@ -209,7 +209,7 @@ if __name__ == '__main__':
     wks= r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     
     #initialize ee with a service account key
-    print ('Connecting to Earth Engine')
+    print ('\nConnecting to Earth Engine')
     try:
         service_account = 'lclu-942@ee-lclu-bc.iam.gserviceaccount.com'
         pkey= os.path.join(wks, 'work', 'ee-lclu-bc-b2fb2131d77b.json')
