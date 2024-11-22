@@ -5,22 +5,22 @@ https://download.geoservice.dlr.de/WSF2019/#download
 
 import os
 import requests
+import time
 import rasterio
 from rasterio.merge import merge
 
 def download_tifs(url_file, download_dir):
     """
-    Download .tif files from a text file containing URLs.
+    Download .tif files from a text file containing URLs with a 15-second wait between requests.
     
     Args:
         url_file (str): Path to the text file containing URLs.
         download_dir (str): Directory to save downloaded .tif files.
     """
     os.makedirs(download_dir, exist_ok=True)  # Ensure the download directory exists
-
     with open(url_file, "r") as file:
         urls = file.readlines()
-
+    
     for url in urls:
         url = url.strip()  # Remove any whitespace or newlines
         if url:  # Skip empty lines
@@ -34,6 +34,11 @@ def download_tifs(url_file, download_dir):
                     for chunk in response.iter_content(chunk_size=8192):
                         file.write(chunk)
                 print(f"..downloaded: {file_name}")
+                
+                # Wait 15 seconds before next download
+                print("Waiting 15 seconds before next download...")
+                time.sleep(15)
+            
             except requests.exceptions.RequestException as e:
                 print(f"..failed to download {url}: {e}")
 
