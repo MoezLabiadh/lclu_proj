@@ -92,10 +92,10 @@ def mosaic_rasters(folder_path, output_filename, bit_depth, chunk_size):
 if __name__ == '__main__':
     wks= r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     
-    folder_path = os.path.join(wks, 'data', 'existing_data', 'wsf', 'raw_geotiffs')
+    folder_path = os.path.join(wks, 'data', 'existing_data', 'esri')
     
     mosaic_rasters(
         folder_path=folder_path, 
-        output_filename="wfs_10m_mosaic.tif",
+        output_filename="esri_lc_10m_mosaic.tif",
         bit_depth="uint8", 
         chunk_size=1024)
