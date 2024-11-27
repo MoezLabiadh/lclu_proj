@@ -1,13 +1,27 @@
 """
-Generate a cloudless mosaic of Sentinel-2 in Geoogle Earth Engine (GEE)
+Computes a cloudless surface reflectance sentinel-2 composite image in Earth Engine.
+
+Based on the s2cloudless cloud masking approach:
+    https://developers.google.com/earth-engine/tutorials/community/sentinel-2-s2cloudless
+
+and the modified cloud filtering params by SashaNasonova:
+    https://github.com/SashaNasonova/geeMosaics/blob/main/S2_SR_8bit_quarterly_mosaics.ipynb 
+    
+
+Next Steps:    
+    Exporting the image to Geotiff is currently not working for large AOIs.
+    Ideas: convert to 8-bit, doanload data by chunk
 """
 
 import os
 import ee
 import geemap
-import timeit
+import numpy as np
+import rasterio
+from rasterio.crs import CRS
 import geopandas as gpd
 from shapely.geometry import mapping
+import timeit    
 
 
 def gdf_to_ee_geometry(gdf):
@@ -38,6 +52,7 @@ def get_s2_sr_cld_col(aoi, start_date, end_date):
             'rightField': 'system:index'
         })
     }))
+
 
 # Get cloud bands
 def add_cloud_bands(img):
@@ -108,6 +123,57 @@ def apply_cld_shdw_mask(img):
     return img.select('B.*').updateMask(not_cld_shdw)
 
 
+def export_geotiff(image, aoi, outpath, resolution, bands=None) :
+    """
+    Exports the selected bands of an ee.image to a geotiff file.
+    """
+    
+    # Select specific bands if provided
+    if bands:
+        image = image.select(bands)
+    
+    # Get bounds of the AOI
+    bounds = aoi.bounds()
+    coords = bounds.coordinates().getInfo()[0]  # Extract the coordinates
+
+    # Get the image as a numpy array
+    image_array = geemap.ee_to_numpy(
+        image, 
+        region=aoi, 
+        scale=resolution # spatial resolution in meters
+    )
+
+    # Get the projection
+    projection = image.projection()
+    crs = projection.crs().getInfo()  # Retrieve CRS as EPSG
+    crs_wkt = CRS.from_string(crs).to_wkt()  # Convert to WKT
+
+    # Create transform using the bounds
+    transform = rasterio.transform.from_bounds(
+        west= min(coord[0] for coord in coords), 
+        south= min(coord[1] for coord in coords), 
+        east= max(coord[0] for coord in coords), 
+        north= max(coord[1] for coord in coords), 
+        width=image_array.shape[1],
+        height=image_array.shape[0]
+    )
+
+    # Write to GeoTIFF
+    with rasterio.open(
+        outpath, 
+        'w', 
+        driver='GTiff',
+        height=image_array.shape[0],
+        width=image_array.shape[1],
+        count=image_array.shape[2],
+        dtype=image_array.dtype,
+        crs=crs_wkt,  # Use the WKT CRS
+        transform=transform
+    ) as dst:
+        for i in range(image_array.shape[2]):
+            dst.write(image_array[:, :, i], i+1)  
+
+
 if __name__ == '__main__':
     start_t = timeit.default_timer() #start time
     
@@ -131,15 +197,15 @@ if __name__ == '__main__':
     # Define area of interest as a GeoPandas GeoDataFrame
     print ('\nReading the Area of Interest')
     # Sample AOI
-
     shp_aoi= os.path.join(wks, "data", "aoi.shp")
     gdf= gpd.read_file(shp_aoi)
     aoi = gdf_to_ee_geometry(gdf)
 
 
-    target_date = '2024-08-15' #target date
+    target_date = '2024-08-15' #center date
     target = ee.Date(target_date)
     time_step = 45 #time step (nbr of days)
+
     START_DATE = target.advance(-time_step, 'day')
     END_DATE = target.advance(time_step, 'day')
 
@@ -149,11 +215,22 @@ if __name__ == '__main__':
     CLD_PRJ_DIST = 1
     BUFFER = 10
 
-    
-    ## Create a cloud masked mosaic
+    #
+    print ('\nComputing a cloudless s2 mosaic')
     col = get_s2_sr_cld_col(aoi, START_DATE, END_DATE)
-    col_wmsks = col.map(add_cld_shdw_mask)
-    s2_noclouds = col_wmsks.map(apply_cld_shdw_mask).median()
+    col_wmsks = col.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+    s2_noclouds = col_wmsks.median()
+
+    '''BufferError
+    print ('\nExporting the mosaic to geotiff')
+    export_geotiff(
+        image = s2_noclouds, 
+        aoi = aoi, 
+        resolution = 10,
+        bands = ['B2', 'B3', 'B4', 'B8A'],
+        outpath = os.path.join(wks, 'work', 's2_mosaic_10m.tif')
+        )
+    '''
 
 
     finish_t = timeit.default_timer() #finish time
