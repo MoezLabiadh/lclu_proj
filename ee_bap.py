@@ -19,14 +19,13 @@ The scoring functions rank each S2 pixel for:
             is calculated as a measure of how cloud-free the image is over the 
             specified area of interest (aoi).
             
-    (iii) distance to clouds
+    (iii) distance to clouds and cloud shadows
             If the distance from cloudy pixels is greater than 150 meters, the score is set to 1, 
             indicating the pixel is sufficiently far from clouds.
             If the distance is less than or equal to 150 meters, 
             a Gaussian-like decay function assigns a score based on proximity.
     
     
-Author: Moez Labiadh    
 """
 
 import os
@@ -48,8 +47,13 @@ def gdf_to_ee_geometry(gdf):
 
 
 def add_distance_score(image):
-    cloud_mask = image.select('MSK_CLDPRB').gt(60)  # Cloud probability > 60%
-    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
+    cloud_shadow_mask = image.select('SCL').neq(3).And(  # Exclude Cloud Shadows
+        image.select('SCL').neq(7)).And(                 # Exclude Clouds Low Probability
+        image.select('SCL').neq(8)).And(                 # Exclude Clouds Medium Probability
+        image.select('SCL').neq(9)).And(                 # Exclude Clouds High Probability
+        image.select('SCL').neq(10))                     # Exclude Cirrus
+                                  
+    distance = cloud_shadow_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
     distance_score = distance.expression(
         'distance > 150 ? 1 : exp(-0.5 * pow((distance / 50), 2))', {'distance': distance}
     )
@@ -87,7 +91,7 @@ def add_date_score(image, target_date):
 
 
 
-def process_collection(aoi, target_date, cloud_pct):
+def process_collection(aoi, target_date, time_step, cloud_pct):
     """
     Applies the BAP scores to the S2 collection.
     The time window is set to 45 days before and after the target date.
@@ -96,17 +100,35 @@ def process_collection(aoi, target_date, cloud_pct):
     target = ee.Date(target_date)
     
     # Calculate start_date and end_date as 90 days before and after the target_date
-    start_date = target.advance(-90, 'day')
-    end_date = target.advance(90, 'day')
+    start_date = target.advance(-time_step, 'day')
+    end_date = target.advance(time_step, 'day')
+
+    def add_cloud_shadow_masking(image):
+        """
+        Masks out clouds and cloud shadows using the SCL band.
+        """
+        # Define the mask for clouds and shadows
+        cloud_shadow_mask = image.select('SCL').neq(3).And(  # Exclude Cloud Shadows
+            image.select('SCL').neq(7)).And(                 # Exclude Clouds Low Probability
+            image.select('SCL').neq(8)).And(                 # Exclude Clouds Medium Probability
+            image.select('SCL').neq(9)).And(                 # Exclude Clouds High Probability
+            image.select('SCL').neq(10))                     # Exclude Cirrus
+
+        # Apply the mask
+        return image.updateMask(cloud_shadow_mask)
+    
 
     # Load Sentinel-2 SR imagery
     collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterBounds(aoi) \
         .filterDate(start_date, end_date) \
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_pct)) \
+        .map(lambda img: add_cloud_shadow_masking(img)) \
         .map(lambda img: add_distance_score(img)) \
         .map(lambda img: add_coverage_score(img, aoi)) \
-        .map(lambda img: add_date_score(img, target_date))
+        .map(lambda img: add_date_score(img, target_date))\
+        
+    
         
         
     # Add a total qualityscore to the S2 collection 
@@ -114,7 +136,10 @@ def process_collection(aoi, target_date, cloud_pct):
         distance_score = image.select('DistanceScore')
         coverage_score = image.select('CoverageScore')
         date_score = image.select('DateScore')
-        quality_score = distance_score.multiply(coverage_score).multiply(date_score)
+        #quality_score = distance_score.multiply(coverage_score).multiply(date_score)
+        quality_score = distance_score.multiply(2).add(
+            coverage_score.multiply(2)).add(
+            date_score)
         
         return image.addBands(quality_score.rename('QualityScore').toFloat())
 
@@ -225,40 +250,29 @@ if __name__ == '__main__':
     # Define area of interest as a GeoPandas GeoDataFrame
     print ('\nReading the Area of Interest')
     # Sample AOI
-    coordinates = [
-        [-123.9852, 49.1399],
-        [-123.9852, 49.2199],  
-        [-123.8652, 49.2199], 
-        [-123.8652, 49.1399],  
-        [-123.9852, 49.1399]   
-    ]
 
-    # Create a shapely Polygon
-    polygon = Polygon(coordinates)
-
-    # Create GeoDataFrame
-    data = {'geometry': [polygon]}
-    gdf = gpd.GeoDataFrame(data, geometry='geometry', crs="EPSG:4326")
+    shp_aoi= os.path.join(wks, "data", "aoi.shp")
+    gdf= gpd.read_file(shp_aoi)
     aoi = gdf_to_ee_geometry(gdf)
 
 
     print ('\nComputing the BAP Composite')
-    # Define the target date
-    target_date = '2024-08-15'
-    
-    # Set the max Cloud percentage
-    cloud_pct= 30
+    target_date = '2024-08-15' #target date
+    time_step = 45 #time step (nbr of days)
+    cloud_pct= 10 # max Cloud %
 
     # Create the BAP composite
     collection = process_collection(
         aoi, 
-        target_date, 
+        target_date,
+        time_step, 
         cloud_pct
     )
     
     bap_composite= create_bap_composite(collection)
     
     
+    '''
     print ('\nExporting the BAP Composite to geotiff file')
     #Export the BAP composite
     bands= ['B2', 'B3', 'B4', 'B8A']
@@ -269,7 +283,7 @@ if __name__ == '__main__':
         bands= bands,
         outpath= os.path.join(wks, 'work', filename)
     )
-
+    '''
     '''
     # Visualize the composite. Works in Notebook only!!
     Map = geemap.Map()
