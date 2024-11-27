@@ -19,6 +19,7 @@ import geemap
 import numpy as np
 import rasterio
 from rasterio.crs import CRS
+from rasterio.transform import from_bounds
 import geopandas as gpd
 from shapely.geometry import mapping
 import timeit    
@@ -123,55 +124,78 @@ def apply_cld_shdw_mask(img):
     return img.select('B.*').updateMask(not_cld_shdw)
 
 
-def export_geotiff(image, aoi, outpath, resolution, bands=None) :
+def split_geometry(aoi, rows, cols):
     """
-    Exports the selected bands of an ee.image to a geotiff file.
+    Splits a geometry into a grid of smaller geometries.
     """
+    bounds = aoi.bounds()
+    coords = bounds.coordinates().getInfo()[0]
+    min_x, min_y = coords[0][0], coords[0][1]
+    max_x, max_y = coords[2][0], coords[2][1]
+
+    width = (max_x - min_x) / cols
+    height = (max_y - min_y) / rows
+
+    tiles = []
+    for i in range(rows):
+        for j in range(cols):
+            tile_min_x = min_x + j * width
+            tile_max_x = tile_min_x + width
+            tile_min_y = min_y + i * height
+            tile_max_y = tile_min_y + height
+
+            tile = ee.Geometry.Rectangle([tile_min_x, tile_min_y, tile_max_x, tile_max_y])
+            tiles.append(tile)
     
-    # Select specific bands if provided
+    return tiles
+
+
+def export_geotiff_by_chunks(image, aoi, outpath, resolution, bands=None, rows=10, cols=10):
+    """
+    Exports the selected bands of an ee.Image to GeoTIFF files by dividing the AOI into chunks.
+    """
     if bands:
         image = image.select(bands)
     
-    # Get bounds of the AOI
-    bounds = aoi.bounds()
-    coords = bounds.coordinates().getInfo()[0]  # Extract the coordinates
+    tiles = split_geometry(aoi, rows=rows, cols=cols)
+    print (tiles)
+    
+    for idx, tile in enumerate(tiles):
+        print(f"Processing chunk {idx + 1} of {len(tiles)}...")
+        
+        image_array = geemap.ee_to_numpy(
+            image,
+            region=tile,
+            scale=resolution
+        )
+        
+        if image_array is None:
+            print(f"Skipping chunk {idx + 1}: No data available.")
+            continue
 
-    # Get the image as a numpy array
-    image_array = geemap.ee_to_numpy(
-        image, 
-        region=aoi, 
-        scale=resolution # spatial resolution in meters
-    )
+        bounds = tile.bounds().coordinates().getInfo()[0]
+        minx, miny = bounds[0][0], bounds[0][1]
+        maxx, maxy = bounds[2][0], bounds[2][1]
+        transform = from_bounds(minx, miny, maxx, maxy, image_array.shape[1], image_array.shape[0])
+        crs_wkt = "EPSG:4326"
 
-    # Get the projection
-    projection = image.projection()
-    crs = projection.crs().getInfo()  # Retrieve CRS as EPSG
-    crs_wkt = CRS.from_string(crs).to_wkt()  # Convert to WKT
-
-    # Create transform using the bounds
-    transform = rasterio.transform.from_bounds(
-        west= min(coord[0] for coord in coords), 
-        south= min(coord[1] for coord in coords), 
-        east= max(coord[0] for coord in coords), 
-        north= max(coord[1] for coord in coords), 
-        width=image_array.shape[1],
-        height=image_array.shape[0]
-    )
-
-    # Write to GeoTIFF
-    with rasterio.open(
-        outpath, 
-        'w', 
-        driver='GTiff',
-        height=image_array.shape[0],
-        width=image_array.shape[1],
-        count=image_array.shape[2],
-        dtype=image_array.dtype,
-        crs=crs_wkt,  # Use the WKT CRS
-        transform=transform
-    ) as dst:
-        for i in range(image_array.shape[2]):
-            dst.write(image_array[:, :, i], i+1)  
+        chunk_outpath = f"{outpath}/chunk_{idx + 1}.tif"
+        
+        with rasterio.open(
+            chunk_outpath,
+            'w',
+            driver='GTiff',
+            height=image_array.shape[0],
+            width=image_array.shape[1],
+            count=image_array.shape[2],
+            dtype=image_array.dtype.name,
+            crs=crs_wkt,
+            transform=transform
+        ) as dst:
+            for i in range(image_array.shape[2]):
+                dst.write(image_array[:, :, i], i + 1)
+        
+        print(f"Chunk {idx + 1} saved to {chunk_outpath}") 
 
 
 if __name__ == '__main__':
