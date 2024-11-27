@@ -1,3 +1,7 @@
+"""
+Generate a cloudless mosaic of Sentinel-2 in Geoogle Earth Engine (GEE)
+"""
+
 import os
 import ee
 import geemap
@@ -145,8 +149,7 @@ if __name__ == '__main__':
     CLD_PRJ_DIST = 1
     BUFFER = 10
 
-    s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterDate(START_DATE,END_DATE).filterBounds(aoi).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',CLOUD_FILTER))
-
+    
     ## Create a cloud masked mosaic
     col = get_s2_sr_cld_col(aoi, START_DATE, END_DATE)
     col_wmsks = col.map(add_cld_shdw_mask)
