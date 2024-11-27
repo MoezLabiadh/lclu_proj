@@ -25,7 +25,7 @@ The scoring functions rank each S2 pixel for:
             If the distance is less than or equal to 150 meters, 
             a Gaussian-like decay function assigns a score based on proximity.
     
-    
+Author: Moez Labiadh    
 """
 
 import os
@@ -35,7 +35,7 @@ import numpy as np
 import rasterio
 from rasterio.crs import CRS
 import geopandas as gpd
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import mapping
 import timeit
 
 
@@ -46,14 +46,26 @@ def gdf_to_ee_geometry(gdf):
     return ee.Geometry.Polygon(mapping(gdf.unary_union)['coordinates'])
 
 
+def s2_cloud_mask (image):
+    """
+    Computes a cloud mask for Sentinel-2 image in EE
+    """
+    cloud_mask = image.select('SCL').neq(3).And( # Cloud Shadows
+        image.select('SCL').neq(7)).And(         # Clouds Low Probability
+        image.select('SCL').neq(8)).And(         # Clouds Medium Probability
+        image.select('SCL').neq(9)).And(         # Clouds High Probability
+        image.select('SCL').neq(10))             # Cirrus
+    
+    return cloud_mask
+                                        
+
 def add_distance_score(image):
-    cloud_shadow_mask = image.select('SCL').neq(3).And(  # Exclude Cloud Shadows
-        image.select('SCL').neq(7)).And(                 # Exclude Clouds Low Probability
-        image.select('SCL').neq(8)).And(                 # Exclude Clouds Medium Probability
-        image.select('SCL').neq(9)).And(                 # Exclude Clouds High Probability
-        image.select('SCL').neq(10))                     # Exclude Cirrus
-                                  
-    distance = cloud_shadow_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
+    """
+    Adds the distance to clouds score to an s2 image
+
+    """
+    cloud_mask= s2_cloud_mask (image)                              
+    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
     distance_score = distance.expression(
         'distance > 150 ? 1 : exp(-0.5 * pow((distance / 50), 2))', {'distance': distance}
     )
@@ -63,6 +75,9 @@ def add_distance_score(image):
 
 
 def add_coverage_score(image, aoi):
+    """
+    Adds the cloud coverage score to an s2 image
+    """
     cloud_mask = image.select('MSK_CLDPRB').gt(50)
     cloud_percentage = cloud_mask.reduceRegion(
         reducer=ee.Reducer.mean(),
@@ -80,6 +95,9 @@ def add_coverage_score(image, aoi):
 
 
 def add_date_score(image, target_date):
+    """
+    Adds the proximity to target date score to an s2 image
+    """
     target = ee.Date(target_date)
     date_diff = image.date().difference(target, 'day').abs()
     date_score = date_diff.expression(
@@ -93,43 +111,30 @@ def add_date_score(image, target_date):
 
 def process_collection(aoi, target_date, time_step, cloud_pct):
     """
-    Applies the BAP scores to the S2 collection.
-    The time window is set to 45 days before and after the target date.
+    Adds and filters an s2 collection. Applies the BAP scores
     """
     # Convert target_date to an Earth Engine date
     target = ee.Date(target_date)
     
-    # Calculate start_date and end_date as 90 days before and after the target_date
+    # Calculate start_date and end_date as n-days before and after the target_date
     start_date = target.advance(-time_step, 'day')
     end_date = target.advance(time_step, 'day')
-
-    def add_cloud_shadow_masking(image):
-        """
-        Masks out clouds and cloud shadows using the SCL band.
-        """
-        # Define the mask for clouds and shadows
-        cloud_shadow_mask = image.select('SCL').neq(3).And(  # Exclude Cloud Shadows
-            image.select('SCL').neq(7)).And(                 # Exclude Clouds Low Probability
-            image.select('SCL').neq(8)).And(                 # Exclude Clouds Medium Probability
-            image.select('SCL').neq(9)).And(                 # Exclude Clouds High Probability
-            image.select('SCL').neq(10))                     # Exclude Cirrus
-
-        # Apply the mask
-        return image.updateMask(cloud_shadow_mask)
     
+    def apply_cloud_mask(image):
+        cloud_mask= s2_cloud_mask (image)  
+        return image.updateMask(cloud_mask)
 
     # Load Sentinel-2 SR imagery
     collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterBounds(aoi) \
         .filterDate(start_date, end_date) \
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_pct)) \
-        .map(lambda img: add_cloud_shadow_masking(img)) \
+        .map(apply_cloud_mask) \
         .map(lambda img: add_distance_score(img)) \
         .map(lambda img: add_coverage_score(img, aoi)) \
         .map(lambda img: add_date_score(img, target_date))\
         
     
-        
         
     # Add a total qualityscore to the S2 collection 
     def add_quality_score(image):
