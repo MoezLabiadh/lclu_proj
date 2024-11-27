@@ -50,13 +50,13 @@ def s2_cloud_mask (image):
     """
     Computes a cloud mask for Sentinel-2 image in EE
     """
-    cloud_mask = image.select('SCL').neq(3).And( # Cloud Shadows
+    cld_shdw_mask = image.select('SCL').neq(3).And( # Cloud Shadows
         image.select('SCL').neq(7)).And(         # Clouds Low Probability
         image.select('SCL').neq(8)).And(         # Clouds Medium Probability
         image.select('SCL').neq(9)).And(         # Clouds High Probability
         image.select('SCL').neq(10))             # Cirrus
     
-    return cloud_mask
+    return cld_shdw_mask
                                         
 
 def add_distance_score(image):
@@ -64,8 +64,8 @@ def add_distance_score(image):
     Adds the distance to clouds score to an s2 image
 
     """
-    cloud_mask= s2_cloud_mask (image)                              
-    distance = cloud_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
+    cld_shdw_mask= s2_cloud_mask (image)                              
+    distance = cld_shdw_mask.fastDistanceTransform(256, 'manhattan').sqrt().multiply(20)
     distance_score = distance.expression(
         'distance > 150 ? 1 : exp(-0.5 * pow((distance / 50), 2))', {'distance': distance}
     )
@@ -121,8 +121,8 @@ def process_collection(aoi, target_date, time_step, cloud_pct):
     end_date = target.advance(time_step, 'day')
     
     def apply_cloud_mask(image):
-        cloud_mask= s2_cloud_mask (image)  
-        return image.updateMask(cloud_mask)
+        cld_shdw_mask= s2_cloud_mask (image)  
+        return image.updateMask(cld_shdw_mask)
 
     # Load Sentinel-2 SR imagery
     collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
@@ -292,7 +292,9 @@ if __name__ == '__main__':
     '''
     # Visualize the composite. Works in Notebook only!!
     Map = geemap.Map()
-    Map.addLayer(bap_composite, {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 3000}, 'BAP Composite')
+    #viz= {'bands': ['B8A', 'B4', 'B3'], 'min': 0, 'max': 3000}
+    viz= {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 3000}
+    Map.addLayer(bap_composite, viz , 'BAP Composite')
     Map.centerObject(aoi)
     Map
     '''
