@@ -245,9 +245,9 @@ if __name__ == '__main__':
     col_wmsks = col.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
     s2_noclouds = col_wmsks.median()
 
-    '''BufferError
+    '''
     print ('\nExporting the mosaic to geotiff')
-    export_geotiff(
+    export_geotiff_by_chunks(
         image = s2_noclouds, 
         aoi = aoi, 
         resolution = 10,
