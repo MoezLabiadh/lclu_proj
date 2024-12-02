@@ -3,8 +3,8 @@ Computes a mosaic of sentinel-1 composite image in Earth Engine.
 Band added are VV and VH in addition to some polarimetric indices.
 
 Note: a significant portion of BC's eastern area lacks S1 coverage
-        2024 coverage is missing in many regions as well.
-        Used scenes from summer 2023 to fill some gaps.
+        for 2024. 
+
 """
 
 import os
@@ -22,26 +22,19 @@ def gdf_to_ee_geometry(gdf):
 
 def get_s1_mosaic(aoi, start_date, end_date):
 
-    # Previous Year dates. 
-    # Using this because of lack of S1 acqusitions in summer2024
-    prvs_year_start = ee.Date(start_date).advance(-1, 'year')
-    prvs_year_end = ee.Date(end_date).advance(-1, 'year')
+
 
     # Filter S1 collection
     s1_col = (ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(aoi)
+                .filterDate(start_date, end_date)
                 .filter(ee.Filter.eq('instrumentMode', 'IW'))
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
-                .filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING')))
+                .filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'))
+                .sort('system:time_start', False))
     
-    prvs_year_s1_col = s1_col.filterDate(prvs_year_start, prvs_year_end)
-    this_year_s1_col = s1_col.filterDate(start_date, end_date)
-
-    s1_col_all = prvs_year_s1_col.merge(this_year_s1_col)\
-                           .sort('system:time_start', False)
-
-    s1_mosaic = s1_col_all.select(['VV', 'VH']).mean()
+    s1_mosaic = s1_col.select(['VV', 'VH']).mean()
 
     return s1_mosaic
 
@@ -118,13 +111,13 @@ if __name__ == '__main__':
     s1_mosaic = get_s1_mosaic(aoi, START_DATE, END_DATE)
     
     print ('calculate polarimetric indices')
-    add_pol_indices(s1_mosaic)
+    s1_mosaic= add_pol_indices(s1_mosaic)
+    
+
     
     # vissulation. Notebook only!
     Map = geemap.Map()
-
-    viz_s1= {'min': -40, 'max': 0}
+    viz_s1= {'min': -30, 'max': 0}
     Map.addLayer(s1_mosaic.select('VH').clip(aoi), viz_s1 , 'S1-VH')
     Map.centerObject(aoi)
     Map
-
