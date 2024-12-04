@@ -11,9 +11,9 @@ import rasterio
 import timeit
 
 
-def classify_raster_chunked(raster_paths, output_path, px_values, crs, chunk_size=1024):
+def create_training_raster(raster_paths, output_path, px_values, crs, chunk_size=1024):
     """
-    Classify raster pixels in chunks based on provided rules.
+    Classify raster pixels in chunks based on provided rules and save the result with LZW compression.
 
     Parameters:
     raster_paths (dict): Dictionary containing paths to input rasters with keys 'esa', 'nrcan', 'esri', and 'wfs'.
@@ -30,10 +30,10 @@ def classify_raster_chunked(raster_paths, output_path, px_values, crs, chunk_siz
         transform = src.transform
 
     # Update the profile for the output raster
-    profile.update(dtype=rasterio.uint8, count=1, nodata=0, crs=crs)
+    profile.update(dtype=rasterio.uint8, count=1, nodata=0, crs=crs, compress='lzw')
 
     # Initialize the output raster
-    print(f'\nCreating output raster at {output_path}')
+    print(f'\nCreating output raster at {output_path} with LZW compression')
     with rasterio.open(output_path, 'w', **profile) as dst:
         # Process in chunks
         print('\nProcessing in chunks...')
@@ -90,6 +90,7 @@ def classify_raster_chunked(raster_paths, output_path, px_values, crs, chunk_siz
     print('\nClassification complete.')
 
 
+
 if __name__ == '__main__':
     start_t = timeit.default_timer()  # Start time
     
@@ -106,12 +107,12 @@ if __name__ == '__main__':
     
     output_path = os.path.join(wks, 'data', 'training_data', 'training_raster.tif')
     
-    classify_raster_chunked(
+    create_training_raster(
         raster_paths, 
         output_path, 
         values_df, 
         crs='EPSG:3005', 
-        chunk_size=1024
+        chunk_size=10000
     )
 
     finish_t = timeit.default_timer()  # Finish time
