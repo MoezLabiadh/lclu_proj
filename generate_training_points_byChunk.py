@@ -1,3 +1,14 @@
+"""
+Generate training data for Land Cover classification.
+    An n-number of points is generated for each land cover class
+    based on a training raster. 
+    
+    The raster is process in chunks due to its large size (memory allocation issues)
+    
+Author: Moez Labiadh
+
+"""
+
 import os
 import random
 import numpy as np
@@ -112,6 +123,32 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
     return gdf
 
 
+def process_vector(gdf):
+    """
+    CLeansup and reproject the gdf
+
+    Parameters
+    ----------
+    gdf : GeoDataFrame
+        A GeoDataFrame containing the generated points.
+
+    Returns
+    -------
+    cleaned-up and ready-to-use GeoDataFrame 
+        
+    """
+    gdf = gdf.rename(columns={'value': 'class_id'})
+
+    gdf = gdf.to_crs(epsg=4326)
+    
+    gdf['latitude'] = gdf.geometry.y
+    gdf['longitude'] = gdf.geometry.x
+    
+    return gdf
+        
+    
+
+
 if __name__ == '__main__':
     start_t = timeit.default_timer()  # Start time
 
@@ -121,13 +158,15 @@ if __name__ == '__main__':
     # Generate training points with chunk processing
     gdf = generate_training_points(
         raster, 
-        n_points=5000, 
+        n_points=2000, 
         crs=3005, 
-        dist_from_edge=2, 
+        dist_from_edge=5, 
         chunk_size_pixels=10240)
 
     # Save the resulting GeoDataFrame to a shapefile
-    print("Saving the GeoDataFrame to shapefile...")
+    print("Saving the training points vector file...")
+    gdf =  process_vector(gdf)
+   
     output_file = os.path.join(wks, 'data', 'training_data', 'training_points.shp')
     gdf.to_file(output_file)
 
