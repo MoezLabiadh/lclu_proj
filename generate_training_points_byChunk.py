@@ -6,9 +6,10 @@ import geopandas as gpd
 from shapely.geometry import Point
 from rasterio.windows import Window
 from scipy.ndimage import binary_erosion
+import timeit
 
 
-def process_chunk(data_chunk, mask_chunk, transform, dist_from_edge, n_points, unique_values):
+def process_chunk(data_chunk, transform, dist_from_edge, n_points, unique_values):
     """
     Processes a single chunk of raster data to generate training points.
 
@@ -16,8 +17,6 @@ def process_chunk(data_chunk, mask_chunk, transform, dist_from_edge, n_points, u
     ----------
     data_chunk : ndarray
         A chunk of the raster data.
-    mask_chunk : ndarray
-        Corresponding chunk of the mask raster (if provided).
     transform : Affine
         Affine transformation for the current chunk.
     dist_from_edge : int
@@ -41,13 +40,6 @@ def process_chunk(data_chunk, mask_chunk, transform, dist_from_edge, n_points, u
             structure=np.ones((dist_from_edge * 2 + 1, dist_from_edge * 2 + 1))
         )
 
-        # Handle mask alignment
-        if mask_chunk is not None:
-            if eroded_mask.shape != mask_chunk.shape:
-                print("Resizing mask to match chunk dimensions...")
-                mask_chunk = mask_chunk[:eroded_mask.shape[0], :eroded_mask.shape[1]]
-            eroded_mask &= (mask_chunk != 1)
-
         valid_indices = np.argwhere(eroded_mask)
         print(f"Found {len(valid_indices)} valid pixels for value {value}.")
 
@@ -64,7 +56,7 @@ def process_chunk(data_chunk, mask_chunk, transform, dist_from_edge, n_points, u
     return points
 
 
-def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edge=5, mask_path=None, chunk_size_pixels=10240):
+def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edge=5, chunk_size_pixels=10240):
     """
     Generates random points covering each class/value of a spatial raster in chunks.
 
@@ -78,8 +70,6 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
         Buffer distance from the edge pixels in pixels.
     crs : int
         EPSG code of the input raster CRS. Default is BC Albers (EPSG:3005).
-    mask_path : str, optional
-        Path to a raster mask where pixel values of 1 indicate areas to exclude.
     chunk_size_pixels : int
         Number of pixels in each chunk.
 
@@ -94,13 +84,6 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
         unique_values = np.unique(src.read(1)[src.read(1) != src.nodata])
         print(f"Identified {len(unique_values)} unique values in the raster.")
 
-        mask_data = None
-        if mask_path:
-            print("\nOpening mask raster file...")
-            with rasterio.open(mask_path) as mask_src:
-                mask_data = mask_src.read(1)
-            print("Mask raster loaded.")
-
         width, height = src.width, src.height
         chunk_cols = min(chunk_size_pixels, width)
         chunk_rows = min(chunk_size_pixels, height)
@@ -111,13 +94,9 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
                 print(f"\nProcessing chunk at col: {col_off}, row: {row_off}...")
                 window = Window(col_off, row_off, chunk_cols, chunk_rows)
                 data_chunk = src.read(1, window=window)
-                mask_chunk = None
-                if mask_data is not None:
-                    mask_chunk = mask_data[window.toslices()]
-
                 chunk_transform = src.window_transform(window)
                 chunk_points = process_chunk(
-                    data_chunk, mask_chunk, chunk_transform, dist_from_edge, n_points, unique_values
+                    data_chunk, chunk_transform, dist_from_edge, n_points, unique_values
                 )
                 points += chunk_points
                 print(f"Generated {len(chunk_points)} points from the current chunk.")
@@ -134,10 +113,10 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
 
 
 if __name__ == '__main__':
-    # Define file paths and parameters
+    start_t = timeit.default_timer()  # Start time
+
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     raster = os.path.join(wks, 'data', 'training_data', 'training_raster.tif')
-    mask = os.path.join(wks, 'data', 'masks', 'ocean_mask_binary.tif')
 
     # Generate training points with chunk processing
     gdf = generate_training_points(
@@ -145,10 +124,16 @@ if __name__ == '__main__':
         n_points=5000, 
         crs=3005, 
         dist_from_edge=2, 
-        mask_path=mask,
         chunk_size_pixels=10240)
 
     # Save the resulting GeoDataFrame to a shapefile
-    print("Saving the gdf to shapefile")
-    output_file = os.path.join(wks, 'data', 'training_points_vri_with_mask_chunks.shp')
-    gdf.to_file(os.path.join(wks, 'data', 'training_data', 'training_points.shp'))
+    print("Saving the GeoDataFrame to shapefile...")
+    output_file = os.path.join(wks, 'data', 'training_data', 'training_points.shp')
+    gdf.to_file(output_file)
+
+    
+    finish_t = timeit.default_timer()  # Finish time
+    t_sec = round(finish_t - start_t)
+    mins = int(t_sec / 60)
+    secs = int(t_sec % 60)
+    print(f'\nProcessing Completed in {mins} minutes and {secs} seconds')
