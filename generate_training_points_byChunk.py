@@ -13,10 +13,10 @@ import os
 import random
 import numpy as np
 import rasterio
-import geopandas as gpd
-from shapely.geometry import Point
 from rasterio.windows import Window
 from scipy.ndimage import binary_erosion
+import geopandas as gpd
+from shapely.geometry import Point
 import timeit
 
 
@@ -158,7 +158,7 @@ if __name__ == '__main__':
     # Generate training points with chunk processing
     gdf = generate_training_points(
         raster, 
-        n_points=2000, 
+        n_points=5000, 
         crs=3005, 
         dist_from_edge=5, 
         chunk_size_pixels=10240)
