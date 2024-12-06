@@ -3,10 +3,10 @@ Generate training data for Land Cover classification.
     An n-number of points is generated for each land cover class
     based on a training raster. 
     
-    The raster is process in chunks due to its large size (memory allocation issues)
+    The raster is processed in chunks due to its large size 
+    (memory allocation issues)
     
 Author: Moez Labiadh
-
 """
 
 import os
