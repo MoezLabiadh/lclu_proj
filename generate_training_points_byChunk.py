@@ -4,7 +4,9 @@ Generate training data for Land Cover classification.
     based on a training raster. 
     
     The raster is processed in chunks due to its large size 
-    (memory allocation issues)
+    (memory allocation issues).
+    
+    Edge pixels are ignored due to possible mis-alignment issues and mixed covers.
     
 Author: Moez Labiadh
 """
@@ -123,7 +125,7 @@ def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edg
     return gdf
 
 
-def process_vector(gdf):
+def process_vector(gdf, output_file):
     """
     CLeansup and reproject the gdf
 
@@ -141,8 +143,12 @@ def process_vector(gdf):
 
     gdf = gdf.to_crs(epsg=4326)
     
+    # add lat/long columns
     gdf['latitude'] = gdf.geometry.y
     gdf['longitude'] = gdf.geometry.x
+    
+    #export to file
+    gdf.to_file(output_file)
     
     return gdf
         
@@ -153,7 +159,7 @@ if __name__ == '__main__':
     start_t = timeit.default_timer()  # Start time
 
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-    raster = os.path.join(wks, 'data', 'training_data', 'training_raster.tif')
+    raster = os.path.join(wks, 'data', 'training_data', 'training_raster_v5.tif')
 
     # Generate training points with chunk processing
     gdf = generate_training_points(
@@ -161,14 +167,15 @@ if __name__ == '__main__':
         n_points=5000, 
         crs=3005, 
         dist_from_edge=5, 
-        chunk_size_pixels=10240)
+        chunk_size_pixels=20480)
 
     # Save the resulting GeoDataFrame to a shapefile
     print("Saving the training points vector file...")
-    gdf =  process_vector(gdf)
+    output_file = os.path.join(wks, 'data', 'training_data', 'training_points_v2.shp')
+    gdf =  process_vector(gdf, output_file)
    
-    output_file = os.path.join(wks, 'data', 'training_data', 'training_points.shp')
-    gdf.to_file(output_file)
+    
+
 
     
     finish_t = timeit.default_timer()  # Finish time
