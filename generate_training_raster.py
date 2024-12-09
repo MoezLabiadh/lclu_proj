@@ -3,6 +3,7 @@ Create a training raster by combining existing land cover rasters:
     ESA WorldCover, ESRI Lnad Cover, Natural Resource Canada Land Cover, 
     DLR World Settelement Footprint (WSF).
     
+    The rasters were resamples and aligned beforehand using the ESA raster as refrenece.
     The rasters are processed in chunks due to their large size (memory allocation issues).
     
 Author: Moez Labiadh
@@ -62,15 +63,14 @@ def create_training_raster(raster_paths, output_path, px_values, crs, chunk_size
                 esri_data = rasterio.open(raster_paths['esri']).read(1, window=window)
                 wfs_data = rasterio.open(raster_paths['wfs']).read(1, window=window)
 
-                '''
+  
                 # Debug: Print shapes of input arrays
                 print("Input array shapes:")
                 print(f"ESA: {esa_data.shape}")
                 print(f"NRCAN: {nrcan_data.shape}")
                 print(f"ESRI: {esri_data.shape}")
                 print(f"WSF: {wfs_data.shape}")
-                '''
-
+ 
                 # Ensure all arrays have the same shape by trimming to the smallest
                 min_height = min(esa_data.shape[0], nrcan_data.shape[0], 
                                  esri_data.shape[0], wfs_data.shape[0])
@@ -81,6 +81,7 @@ def create_training_raster(raster_paths, output_path, px_values, crs, chunk_size
                 nrcan_data = nrcan_data[:min_height, :min_width]
                 esri_data = esri_data[:min_height, :min_width]
                 wfs_data = wfs_data[:min_height, :min_width]
+
 
                 # Initialize output chunk
                 output_chunk = np.zeros_like(esa_data, dtype=np.uint8)
@@ -114,21 +115,22 @@ if __name__ == '__main__':
     xlsx_path = os.path.join(wks, 'documents', 'classification_schema.xlsx')  # xlsx file containing pixel values
     values_df = pd.read_excel(xlsx_path, 'training_pixel_values')
 
+    input_rasters_path= os.path.join(wks, 'data', 'training_data', 'input_rasters')
     raster_paths = {
         "esa": os.path.join(wks, 'data', 'existing_data', 'esa', 'esa_lc_10m_mosaic_bc.tif'),
-        "nrcan": os.path.join(wks, 'data', 'existing_data', 'nrcan', 'nrcan_lc_10m_bc.tif'),
-        "esri": os.path.join(wks, 'data', 'existing_data', 'esri', 'esri_lc_10m_mosaic_bc.tif'),
-        "wfs": os.path.join(wks, 'data', 'existing_data', 'wsf', 'wfs_10m_mosaic_bc_4.tif'),
+        "nrcan": os.path.join(input_rasters_path, 'aligned_nrcan_lc_10m_bc.tif'),
+        "esri": os.path.join(input_rasters_path, 'aligned_esri_lc_10m_mosaic_bc.tif'),
+        "wfs": os.path.join(input_rasters_path, 'aligned_wfs_10m_mosaic_bc_4.tif'),
     }
     
-    output_path = os.path.join(wks, 'data', 'training_data', 'training_raster_v4_pad_smallerSize.tif')
+    output_path = os.path.join(wks, 'data', 'training_data', 'training_raster_v5.tif')
     
     create_training_raster(
         raster_paths, 
         output_path, 
         values_df, 
         crs='EPSG:3005', 
-        chunk_size=1024
+        chunk_size=20480
     )
 
     finish_t = timeit.default_timer()  # Finish time
