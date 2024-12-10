@@ -16,7 +16,7 @@ Con(
                                 (("esa_lc_10m_mosaic_bc.tif" == 60) & ("nrcan_lc_10m_bc.tif" == 16) & ("esri_lc_10m_mosaic_bc.tif" == 8)), 8,
                                 Con(
                                     (("esa_lc_10m_mosaic_bc.tif" == 70) & ("nrcan_lc_10m_bc.tif" == 19) & ("esri_lc_10m_mosaic_bc.tif" == 9)), 9,
-                                    0
+                                    "esa_lc_10m_mosaic_bc.tif"
                                 )
                             )
                         )
