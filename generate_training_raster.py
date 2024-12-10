@@ -150,13 +150,15 @@ class TrainingRasterCreator:
                     chunk_height = min(self.chunk_size, height - row_start)
                     chunk_width = min(self.chunk_size, width - col_start)
 
+                    
                     # Define window
                     window = rasterio.windows.Window(
                         col_start, row_start,
                         chunk_width,
                         chunk_height
                     )
-
+                    
+                    self.logger.info(f"Processing chunk: {window}")
                     # Read chunk data
                     raster_chunks = {
                         source: rasterio.open(path).read(1, window=window)
@@ -180,7 +182,7 @@ class TrainingRasterCreator:
                     # Write chunk
                     dst.write(output_chunk, 1, window=window)
 
-                    self.logger.info(f"Processed window: {window}")
+                    
 
     def _create_condition_mask(
         self, 
