@@ -1,251 +1,193 @@
 """
-Computes a cloudless surface reflectance sentinel-2 composite image in Earth Engine.
+Computes a cloudless surface reflectance sentinel-2 composite image in Earth Engine
+and adds spectral indices and terrain variables for classification.
 
 Based on the s2cloudless cloud masking approach:
     https://developers.google.com/earth-engine/tutorials/community/sentinel-2-s2cloudless
 
 and the modified cloud filtering params by SashaNasonova:
     https://github.com/SashaNasonova/geeMosaics/blob/main/S2_SR_8bit_quarterly_mosaics.ipynb 
-    
 
-Next Steps:    
-    Exporting the image to Geotiff is currently not working for large AOIs.
-    Ideas: convert to 8-bit, doanload data by chunk
 """
 
 import os
 import ee
-import geemap
-import numpy as np
+#import geemap
+#import numpy as np
 import geopandas as gpd
 from shapely.geometry import mapping
-import timeit    
+import timeit
+
+class EEAuthenticator:
+    def __init__(self, service_account, pkey_path):
+        self.service_account = service_account
+        self.pkey_path = pkey_path
+        self.initialize_ee()
+
+    def initialize_ee(self):
+        print('\nConnecting to Earth Engine')
+        try:
+            credentials = ee.ServiceAccountCredentials(self.service_account, self.pkey_path)
+            ee.Initialize(credentials)
+            print('..EE initialized successfully!')
+        except ee.EEException as e:
+            print("..Unexpected error:", e)
+
+class AOIHandler:
+    def __init__(self, shp_aoi_path):
+        self.shp_aoi_path = shp_aoi_path
+        self.aoi = self.read_aoi()
+
+    def read_aoi(self):
+        print('\nReading the Area of Interest')
+        gdf = gpd.read_file(self.shp_aoi_path)
+        return ee.Geometry.Polygon(mapping(gdf.unary_union)['coordinates'])
 
 
-def gdf_to_ee_geometry(gdf):
-    """
-    Converts a gdf to ee.geometry
-    """
-    return ee.Geometry.Polygon(mapping(gdf.unary_union)['coordinates'])
+class S2Processor:
+    def __init__(self, workspace: str, aoi_handler: AOIHandler, ee_authenticator: EEAuthenticator, 
+             target_date: str, time_step: int, cloud_filter: float, 
+             cld_prb_thresh: float, nir_drk_thresh: float, 
+             cld_prj_dist: float, buffer: int):
+        self.workspace = workspace
+        self.aoi_handler = aoi_handler
+        self.ee_authenticator = ee_authenticator
+        self.aoi = aoi_handler.aoi
+        self.target_date = target_date
+        self.time_step = time_step
+        self.start_date = ee.Date(self.target_date).advance(-self.time_step, 'day')
+        self.end_date = ee.Date(self.target_date).advance(self.time_step, 'day')
+        self.cloud_filter = cloud_filter
+        self.cld_prb_thresh = cld_prb_thresh
+        self.nir_drk_thresh = nir_drk_thresh
+        self.cld_prj_dist = cld_prj_dist
+        self.buffer = buffer
 
+    def get_s2_sr_cld_col(self):
+        s2_sr_col = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+            .filterBounds(self.aoi)
+            .filterDate(self.start_date, self.end_date)
+            .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', self.cloud_filter)))
 
-def get_s2_sr_cld_col(aoi, start_date, end_date):
-    # Import and filter S2 SR.
-    s2_sr_col = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterBounds(aoi)
-        .filterDate(start_date, end_date)
-        .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', CLOUD_FILTER)))
+        s2_cloudless_col = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+            .filterBounds(self.aoi)
+            .filterDate(self.start_date, self.end_date))
 
-    # Import and filter s2cloudless.
-    s2_cloudless_col = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
-                        .filterBounds(aoi)
-                        .filterDate(start_date, end_date))
+        return ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
+            'primary': s2_sr_col,
+            'secondary': s2_cloudless_col,
+            'condition': ee.Filter.equals(**{
+                'leftField': 'system:index',
+                'rightField': 'system:index'
+            })
+        }))
 
-    # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
-    return ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
-        'primary': s2_sr_col,
-        'secondary': s2_cloudless_col,
-        'condition': ee.Filter.equals(**{
-            'leftField': 'system:index',
-            'rightField': 'system:index'
-        })
-    }))
+    @staticmethod
+    def add_cloud_bands(img, cld_prb_thresh):
+        cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
+        is_cloud = cld_prb.gt(cld_prb_thresh).rename('clouds')
+        return img.addBands(ee.Image([cld_prb, is_cloud]))
 
+    @staticmethod
+    def add_shadow_bands(img, nir_drk_thresh, cld_prj_dist):
+        not_water = img.select('SCL').neq(6)
+        dark_pixels = img.select('B8').lt(nir_drk_thresh * 1e4).multiply(not_water).rename('dark_pixels')
+        shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')))
+        cld_proj = (img.select('clouds').directionalDistanceTransform(shadow_azimuth, cld_prj_dist * 10)
+                    .reproject(crs=img.select(0).projection(), scale=100)
+                    .select('distance').mask().rename('cloud_transform'))
+        shadows = cld_proj.multiply(dark_pixels).rename('shadows')
+        return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
 
-# Get cloud bands
-def add_cloud_bands(img):
-    # Get s2cloudless image, subset the probability band.
-    cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
+    def add_cld_shdw_mask(self, img):
+        img = self.add_cloud_bands(img, self.cld_prb_thresh)
+        img = self.add_shadow_bands(img, self.nir_drk_thresh, self.cld_prj_dist)
+        is_cld_shdw = img.select('clouds').add(img.select('shadows')).gt(0)
+        is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(self.buffer * 2 / 20)
+            .reproject(crs=img.select([0]).projection(), scale=20).rename('cloudmask'))
+        return img.addBands(is_cld_shdw)
 
-    # Condition s2cloudless by the probability threshold value.
-    is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
+    @staticmethod
+    def apply_cld_shdw_mask(img):
+        not_cld_shdw = img.select('cloudmask').Not()
+        return img.select('B.*').updateMask(not_cld_shdw)
 
-    # Add the cloud probability layer and cloud mask as image bands.
-    return img.addBands(ee.Image([cld_prb, is_cloud]))
+    @staticmethod
+    def add_indices(img):
+        """
+        Adds spectral indices to the S2 mosaic
+        """
+        indices = {
+            'NDVI': img.normalizedDifference(['B8', 'B4']),
+            'EVI': img.expression(
+                '2.5 * ((B8 - B4) / (B8 + 6 * B4 - 7.5 * B2 + 1))',
+                {'B8': img.select('B8'), 'B4': img.select('B4'), 'B2': img.select('B2')}
+            ),
+            'MNDWI': img.normalizedDifference(['B3', 'B11']),
+            'BSI': img.expression(
+                '((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))',
+                {'B11': img.select('B11'), 'B4': img.select('B4'), 'B8': img.select('B8'), 'B2': img.select('B2')}
+            ),
+            'SAVI': img.expression(
+                '((B8 - B4) / (B8 + B4 + L)) * (1 + L)',
+                {'B8': img.select('B8'), 'B4': img.select('B4'), 'L': 0.5}
+            ),
+            'NDMI': img.normalizedDifference(['B8', 'B11']),
+            'NBR': img.normalizedDifference(['B8', 'B12'])
+        }
+        return img.addBands([indices[key].rename(key) for key in indices])
 
-# Create cloud shadow bands
-# NIR_DRK_THRESH is defined in the main body of the script
-def add_shadow_bands(img):
-    # Identify water pixels from the SCL band.
-    not_water = img.select('SCL').neq(6)
-
-    # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
-    SR_BAND_SCALE = 1e4
-    dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
-
-    # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
-    shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
-
-    # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
-    cld_proj = (img.select('clouds').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
-        .reproject(**{'crs': img.select(0).projection(), 'scale': 100})
-        .select('distance')
-        .mask()
-        .rename('cloud_transform'))
-
-    # Identify the intersection of dark pixels with cloud shadow projection.
-    shadows = cld_proj.multiply(dark_pixels).rename('shadows')
-
-    # Add dark pixels, cloud projection, and identified shadows as image bands.
-    return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
-
-# Merge cloud and cloud shadow mask, clean up
-# BUFFER is defined in the main body of the script, default 50m, I use 10m. Again, too aggressive
-# There is confusion between snow and cloud
-
-def add_cld_shdw_mask(img):
-    # Add cloud component bands.
-    img_cloud = add_cloud_bands(img)
-
-    # Add cloud shadow component bands.
-    img_cloud_shadow = add_shadow_bands(img_cloud)
-
-    # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
-    is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
-
-    # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
-    # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
-    is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(BUFFER*2/20)
-        .reproject(**{'crs': img.select([0]).projection(), 'scale': 20})
-        .rename('cloudmask'))
-
-    # Add the final cloud-shadow mask to the image.
-    return img_cloud_shadow.addBands(is_cld_shdw)
-
-# Apply all masks
-def apply_cld_shdw_mask(img):
-    # Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
-    not_cld_shdw = img.select('cloudmask').Not()
-
-    # Subset reflectance bands and update their masks, return the result.
-    return img.select('B.*').updateMask(not_cld_shdw)
-
-
-
-def add_indices(img):
-    """
-    Adds spectral indices to the S2 mosaic
-    """
-    # NDVI (Vegetation Index)
-    ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    
-    # EVI (Enhanced Vegetation Index)
-    evi = img.expression(
-        '2.5 * ((B8 - B4) / (B8 + 6 * B4 - 7.5 * B2 + 1))',
-        {'B8': img.select('B8'), 'B4': img.select('B4'), 'B2': img.select('B2')}
-    ).rename('EVI')
-    
-    # MNDWI (Water Index)
-    mndwi = img.normalizedDifference(['B3', 'B11']).rename('MNDWI')
-    
-    # BSI (Bare Soil Index)
-    bsi = img.expression(
-        '((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))',
-        {'B11': img.select('B11'), 'B4': img.select('B4'), 
-         'B8': img.select('B8'), 'B2': img.select('B2')}
-    ).rename('BSI')
-    
-    # SAVI (Soil-Adjusted Vegetation Index)
-    savi = img.expression(
-        '((B8 - B4) / (B8 + B4 + L)) * (1 + L)',
-        {'B8': img.select('B8'), 'B4': img.select('B4'), 'L': 0.5}  # Typical L=0.5
-    ).rename('SAVI')
-    
-    # NDMI (Normalized Difference Moisture Index)
-    ndmi = img.normalizedDifference(['B8', 'B11']).rename('NDMI')
-    
-    # NBR (Normalized Burn Ratio)
-    nbr = img.normalizedDifference(['B8', 'B12']).rename('NBR')
-    
-    # Add all indices as bands
-    return img.addBands([ndvi, evi, mndwi, bsi, savi, ndmi, nbr])
-
-
-def add_terrain(img, aoi):
-    """
-    Adds terrain features to the S2 mosaic.
-    """
-    # Load the SRTM DEM
-    dem = ee.Image('USGS/SRTMGL1_003').clip(aoi)
-    
-    # Elevation
-    elevation = dem.select('elevation').rename('Elevation')
-    
-    # Slope
-    slope = ee.Terrain.slope(dem).rename('Slope')
-    
-    # Aspect
-    aspect = ee.Terrain.aspect(dem).rename('Aspect')
-    
-    # Terrain Roughness Index (TRI)
-    tri = dem.reduceNeighborhood(
-        reducer=ee.Reducer.stdDev(),
-        kernel=ee.Kernel.square(3)
-    ).rename('TRI')
-    
-    # Add all terrain bands
-    return img.addBands([elevation, slope, aspect, tri])
-
-
+    @staticmethod
+    def add_terrain(img, aoi):
+        """
+        Adds terrain features to the S2 mosaic.
+        """
+        dem = ee.Image('USGS/SRTMGL1_003').clip(aoi)
+        elevation = dem.select('elevation').rename('Elevation')
+        slope = ee.Terrain.slope(dem).rename('Slope')
+        aspect = ee.Terrain.aspect(dem).rename('Aspect')
+        tri = dem.reduceNeighborhood(reducer=ee.Reducer.stdDev(), kernel=ee.Kernel.square(3)).rename('TRI')
+        return img.addBands([elevation, slope, aspect, tri])
 
 if __name__ == '__main__':
-    start_t = timeit.default_timer() #start time
-    
-    #workspace
-    wks= r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-    
-    #initialize ee with a service account key
-    print ('\nConnecting to Earth Engine')
-    try:
-        service_account = 'lclu-942@ee-lclu-bc.iam.gserviceaccount.com'
-        pkey= os.path.join(wks, 'work', 'ee-lclu-bc-b2fb2131d77b.json')
-        credentials = ee.ServiceAccountCredentials(service_account, pkey)
-    
-        ee.Initialize(credentials)
-        print('..EE initialized successfully!')
-        
-    except ee.EEException as e:
-        print("..Unexpected error:", e)
-    
+    start_t = timeit.default_timer()
 
-    # Define area of interest as a GeoPandas GeoDataFrame
-    print ('\nReading the Area of Interest')
-    # Sample AOI
-    shp_aoi= os.path.join(wks, "data", "aoi.shp")
-    gdf= gpd.read_file(shp_aoi)
-    aoi = gdf_to_ee_geometry(gdf)
+    wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
+    service_account = 'lclu-942@ee-lclu-bc.iam.gserviceaccount.com'
+    pkey = os.path.join(wks, 'work', 'ee-lclu-bc-b2fb2131d77b.json')
+    EE = EEAuthenticator(service_account, pkey)
 
+    shp_aoi = os.path.join(wks, "data", "AOIs" ,"aoi.shp")
 
-    target_date = '2024-08-15' #center date
-    target = ee.Date(target_date)
-    time_step = 45 #time step (nbr of days)
+    AOI = AOIHandler(shp_aoi)
 
-    START_DATE = target.advance(-time_step, 'day')
-    END_DATE = target.advance(time_step, 'day')
+    print('\nProcessing the S2 time series')
+    S2 = S2Processor(
+        wks, 
+        AOI, 
+        EE, 
+        target_date = '2024-08-15',
+        time_step = 45,
+        cloud_filter = 80,
+        cld_prb_thresh = 50,
+        nir_drk_thresh = 0.15,
+        cld_prj_dist = 1,
+        buffer = 10
+    )
 
-    CLOUD_FILTER = 80
-    CLD_PRB_THRESH = 50
-    NIR_DRK_THRESH = 0.15 
-    CLD_PRJ_DIST = 1
-    BUFFER = 10
+    col = S2.get_s2_sr_cld_col()
+    col_wmsks = col.map(S2.add_cld_shdw_mask).map(S2.apply_cld_shdw_mask)
 
-    
-    print ('\nComputing a cloudless s2 mosaic')
-    col = get_s2_sr_cld_col(aoi, START_DATE, END_DATE)
-    col_wmsks = col.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+    print ('\nComputing a cloudless S2 mosaic')
     s2_mosaic = col_wmsks.median()
 
-
     print ('\nAdding spectral indices to the s2 mosaic')
-    s2_mosaic = add_indices(s2_mosaic)
+    s2_mosaic = S2.add_indices(s2_mosaic)
 
-    print ('\nAdding Trraing bands to the s2 mosaic')
-    s2_mosaic = add_terrain(s2_mosaic, aoi)
+    print ('\nAdding Terrain bands to the s2 mosaic')
+    s2_mosaic = S2.add_terrain(s2_mosaic, AOI.aoi)
 
-
-
-    finish_t = timeit.default_timer() #finish time
-    t_sec = round(finish_t-start_t)
-    mins = int (t_sec/60)
-    secs = int (t_sec%60)
-    print('\nProcessing Completed in {} minutes and {} seconds'.format (mins,secs))
+    finish_t = timeit.default_timer()
+    t_sec = round(finish_t - start_t)
+    mins, secs = divmod(t_sec, 60)
+    print(f'\nProcessing Completed in {mins} minutes and {secs} seconds')
