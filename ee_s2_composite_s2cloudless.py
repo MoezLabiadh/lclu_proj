@@ -17,9 +17,6 @@ import os
 import ee
 import geemap
 import numpy as np
-import rasterio
-from rasterio.crs import CRS
-from rasterio.transform import from_bounds
 import geopandas as gpd
 from shapely.geometry import mapping
 import timeit    
@@ -124,78 +121,71 @@ def apply_cld_shdw_mask(img):
     return img.select('B.*').updateMask(not_cld_shdw)
 
 
-def split_geometry(aoi, rows, cols):
+
+def add_indices(img):
     """
-    Splits a geometry into a grid of smaller geometries.
+    Adds spectral indices to the S2 mosaic
     """
-    bounds = aoi.bounds()
-    coords = bounds.coordinates().getInfo()[0]
-    min_x, min_y = coords[0][0], coords[0][1]
-    max_x, max_y = coords[2][0], coords[2][1]
-
-    width = (max_x - min_x) / cols
-    height = (max_y - min_y) / rows
-
-    tiles = []
-    for i in range(rows):
-        for j in range(cols):
-            tile_min_x = min_x + j * width
-            tile_max_x = tile_min_x + width
-            tile_min_y = min_y + i * height
-            tile_max_y = tile_min_y + height
-
-            tile = ee.Geometry.Rectangle([tile_min_x, tile_min_y, tile_max_x, tile_max_y])
-            tiles.append(tile)
+    # NDVI (Vegetation Index)
+    ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
     
-    return tiles
-
-
-def export_geotiff_by_chunks(image, aoi, outpath, resolution, bands=None, rows=10, cols=10):
-    """
-    Exports the selected bands of an ee.Image to GeoTIFF files by dividing the AOI into chunks.
-    """
-    if bands:
-        image = image.select(bands)
+    # EVI (Enhanced Vegetation Index)
+    evi = img.expression(
+        '2.5 * ((B8 - B4) / (B8 + 6 * B4 - 7.5 * B2 + 1))',
+        {'B8': img.select('B8'), 'B4': img.select('B4'), 'B2': img.select('B2')}
+    ).rename('EVI')
     
-    tiles = split_geometry(aoi, rows=rows, cols=cols)
-    print (tiles)
+    # MNDWI (Water Index)
+    mndwi = img.normalizedDifference(['B3', 'B11']).rename('MNDWI')
     
-    for idx, tile in enumerate(tiles):
-        print(f"Processing chunk {idx + 1} of {len(tiles)}...")
-        
-        image_array = geemap.ee_to_numpy(
-            image,
-            region=tile,
-            scale=resolution
-        )
-        
-        if image_array is None:
-            print(f"Skipping chunk {idx + 1}: No data available.")
-            continue
+    # BSI (Bare Soil Index)
+    bsi = img.expression(
+        '((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))',
+        {'B11': img.select('B11'), 'B4': img.select('B4'), 
+         'B8': img.select('B8'), 'B2': img.select('B2')}
+    ).rename('BSI')
+    
+    # SAVI (Soil-Adjusted Vegetation Index)
+    savi = img.expression(
+        '((B8 - B4) / (B8 + B4 + L)) * (1 + L)',
+        {'B8': img.select('B8'), 'B4': img.select('B4'), 'L': 0.5}  # Typical L=0.5
+    ).rename('SAVI')
+    
+    # NDMI (Normalized Difference Moisture Index)
+    ndmi = img.normalizedDifference(['B8', 'B11']).rename('NDMI')
+    
+    # NBR (Normalized Burn Ratio)
+    nbr = img.normalizedDifference(['B8', 'B12']).rename('NBR')
+    
+    # Add all indices as bands
+    return img.addBands([ndvi, evi, mndwi, bsi, savi, ndmi, nbr])
 
-        bounds = tile.bounds().coordinates().getInfo()[0]
-        minx, miny = bounds[0][0], bounds[0][1]
-        maxx, maxy = bounds[2][0], bounds[2][1]
-        transform = from_bounds(minx, miny, maxx, maxy, image_array.shape[1], image_array.shape[0])
-        crs_wkt = "EPSG:4326"
 
-        chunk_outpath = f"{outpath}/chunk_{idx + 1}.tif"
-        
-        with rasterio.open(
-            chunk_outpath,
-            'w',
-            driver='GTiff',
-            height=image_array.shape[0],
-            width=image_array.shape[1],
-            count=image_array.shape[2],
-            dtype=image_array.dtype.name,
-            crs=crs_wkt,
-            transform=transform
-        ) as dst:
-            for i in range(image_array.shape[2]):
-                dst.write(image_array[:, :, i], i + 1)
-        
-        print(f"Chunk {idx + 1} saved to {chunk_outpath}") 
+def add_terrain(img, aoi):
+    """
+    Adds terrain features to the S2 mosaic.
+    """
+    # Load the SRTM DEM
+    dem = ee.Image('USGS/SRTMGL1_003').clip(aoi)
+    
+    # Elevation
+    elevation = dem.select('elevation').rename('Elevation')
+    
+    # Slope
+    slope = ee.Terrain.slope(dem).rename('Slope')
+    
+    # Aspect
+    aspect = ee.Terrain.aspect(dem).rename('Aspect')
+    
+    # Terrain Roughness Index (TRI)
+    tri = dem.reduceNeighborhood(
+        reducer=ee.Reducer.stdDev(),
+        kernel=ee.Kernel.square(3)
+    ).rename('TRI')
+    
+    # Add all terrain bands
+    return img.addBands([elevation, slope, aspect, tri])
+
 
 
 if __name__ == '__main__':
@@ -239,22 +229,19 @@ if __name__ == '__main__':
     CLD_PRJ_DIST = 1
     BUFFER = 10
 
-    #
+    
     print ('\nComputing a cloudless s2 mosaic')
     col = get_s2_sr_cld_col(aoi, START_DATE, END_DATE)
     col_wmsks = col.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
-    s2_noclouds = col_wmsks.median()
+    s2_mosaic = col_wmsks.median()
 
-    '''
-    print ('\nExporting the mosaic to geotiff')
-    export_geotiff_by_chunks(
-        image = s2_noclouds, 
-        aoi = aoi, 
-        resolution = 10,
-        bands = ['B2', 'B3', 'B4', 'B8A'],
-        outpath = os.path.join(wks, 'work', 's2_mosaic_10m.tif')
-        )
-    '''
+
+    print ('\nAdding spectral indices to the s2 mosaic')
+    s2_mosaic = add_indices(s2_mosaic)
+
+    print ('\nAdding Trraing bands to the s2 mosaic')
+    s2_mosaic = add_terrain(s2_mosaic, aoi)
+
 
 
     finish_t = timeit.default_timer() #finish time
