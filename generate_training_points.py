@@ -1,105 +1,275 @@
 """
-Generate training data for Land Cover classification.
+Generate training data for Land Cover classification:
 
+    A specified number of points (n) is generated for each land cover 
+    class based on a training raster.
+
+    The raster is processed in chunks due to its large size 
+    to avoid memory allocation issues.
+
+    The n_points parameter defines the number of points generated per chunk. 
+    This number may be reduced if there are not enough available pixels.
+
+    Edge pixels are excluded to prevent potential misalignment and mixed-pixel issues.
+    
+Author: Moez Labiadh
 """
+
 import os
 import random
+import logging
+from typing import Generator
+
 import numpy as np
 import rasterio
-import geopandas as gpd
-from shapely.geometry import Point
+from rasterio.windows import Window
 from scipy.ndimage import binary_erosion
 
-def generate_training_points(raster_path, n_points=1000, crs=3005, dist_from_edge=2, mask=None):
-    """
-    Generates random points covering each class/value of a spatial raster, with an optional exclusion mask.
+import geopandas as gpd
+from shapely.geometry import Point
 
-    Parameters
-    ----------
-    raster_path : str
-        Path to the input raster file.
-    n_points : int
-        Number of points to be generated for each class.
-    dist_from_edge : int
-        Buffer distance from the edge pixels in pixels.
-    crs : int
-        EPSG code of the input raster CRS. Default is BC Albers (EPSG:3005).
-    mask : str, optional
-        Path to a raster mask where pixel values of 1 indicate areas to exclude.
-    """
-    # Open the main raster file
-    print ('Reading the Training Raster')
-    with rasterio.open(raster_path) as src:
-        data = src.read(1)
-        transform = src.transform
+import timeit
 
-        # Identify unique categories/values, ignoring no-data values
-        unique_values = np.unique(data[data != src.nodata])
+class TrainingPointGenerator:
+    def __init__(
+        self, 
+        raster_path: str, 
+        n_points: int = 1000, 
+        crs: int = 3005, 
+        dist_from_edge: int = 5, 
+        chunk_size_pixels: int = 10240
+    ):
+        """
+        Initialize the training point generator.
+
+        Parameters
+        ----------
+        raster_path : str
+            Path to the input raster file.
+        n_points : int, optional
+            Number of points to be generated for each class. Default is 1000.
+        crs : int, optional
+            EPSG code of the input raster CRS. Default is BC Albers (EPSG:3005).
+        dist_from_edge : int, optional
+            Buffer distance from the edge pixels in pixels. Default is 5.
+        chunk_size_pixels : int, optional
+            Number of pixels in each chunk. Default is 10240.
+        """
+        # Validate inputs
+        self._validate_inputs(raster_path, n_points, dist_from_edge, chunk_size_pixels)
         
-        # Load the mask if provided
+        self.raster_path = raster_path
+        self.n_points = n_points
+        self.crs = crs
+        self.dist_from_edge = dist_from_edge
+        self.chunk_size_pixels = chunk_size_pixels
         
-        if mask:
-            print ('Reading the Mask Raster')
-            with rasterio.open(mask) as mask_src:
-                mask = mask_src.read(1)
-        else:
-            mask = None
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO, 
+            format='%(asctime)s - %(levelname)s: %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
 
-        points = []
+    def _validate_inputs(
+        self, 
+        raster_path: str, 
+        n_points: int, 
+        dist_from_edge: int, 
+        chunk_size_pixels: int
+    ):
+        """
+        Validate input parameters.
+
+        Raises
+        ------
+        ValueError
+            If inputs are invalid.
+        FileNotFoundError
+            If raster file does not exist.
+        """
+        if not os.path.exists(raster_path):
+            raise FileNotFoundError(f"Raster file not found: {raster_path}")
+        
+        if n_points <= 0:
+            raise ValueError("Number of points must be a positive integer.")
+        
+        if dist_from_edge < 0:
+            raise ValueError("Distance from edge must be a non-negative integer.")
+        
+        if chunk_size_pixels <= 0:
+            raise ValueError("Chunk size must be a positive integer.")
+
+    def _generate_chunk_points(
+        self, 
+        data_chunk: np.ma.MaskedArray, 
+        chunk_transform: rasterio.Affine
+    ) -> Generator[dict, None, None]:
+        """
+        Generate points for a single raster chunk.
+
+        Parameters
+        ----------
+        data_chunk : np.ma.MaskedArray
+            A chunk of the raster data.
+        chunk_transform : rasterio.Affine
+            Affine transformation for the current chunk.
+
+        Yields
+        ------
+        dict
+            Dictionary containing point value and geometry.
+        """
+        # Identify unique values, excluding nodata
+        unique_values = [val for val in np.unique(data_chunk.compressed()) if val != data_chunk.fill_value]
         
         for value in unique_values:
-            print(f"Generating points for category {value} of {len(unique_values)}")
-            # Create a mask for the current category/value
-            category_mask = data == value
+            self.logger.info(f"Processing value {value} in current chunk...")
             
-            # Erode the mask to avoid edge pixels based on the buffer distance
+            # Create category mask and erode edges
+            category_mask = data_chunk == value
             eroded_mask = binary_erosion(
                 category_mask,
-                structure=np.ones((dist_from_edge * 2 + 1, dist_from_edge * 2 + 1))
+                structure=np.ones((self.dist_from_edge * 2 + 1, self.dist_from_edge * 2 + 1))
             )
-            
-            # If a mask is provided, exclude areas where mask == 1
-            if mask is not None:
-                eroded_mask = eroded_mask & (mask != 1)
-            
-            # Get row, col indices of valid pixels
+
+            # Find valid pixel indices
             valid_indices = np.argwhere(eroded_mask)
             
-            # Check if there are enough valid pixels
-            if len(valid_indices) < n_points:
-                print(f"..not enough pixels for category {value}, reducing points to {len(valid_indices)}.")
-                n_points_for_category = len(valid_indices)
-            else:
-                n_points_for_category = n_points
+            if len(valid_indices) == 0:
+                self.logger.warning(f"No valid pixels found for value {value}")
+                continue
             
-            # Randomly sample valid pixels
+            # Determine number of points to sample
+            n_points_for_category = min(self.n_points, len(valid_indices))
+            
+            # Randomly sample points
             sampled_indices = random.sample(valid_indices.tolist(), n_points_for_category)
             
             for row, col in sampled_indices:
-                # Convert pixel coordinates to geographic/map coordinates
-                x, y = rasterio.transform.xy(transform, row, col, offset="center")
-                points.append({"value": value, "geometry": Point(x, y)})
+                x, y = rasterio.transform.xy(chunk_transform, row, col, offset="center")
+                yield {"value": value, "geometry": Point(x, y)}
+
+    def generate_points(self) -> gpd.GeoDataFrame:
+        """
+        Generate random training points from the raster.
+
+        Returns
+        -------
+        gpd.GeoDataFrame
+            GeoDataFrame with generated training points.
+        """
+        points = []
+        
+        try:
+            with rasterio.open(self.raster_path) as src:
+                width, height = src.width, src.height
+                
+                # Determine chunk dimensions
+                chunk_cols = min(self.chunk_size_pixels, width)
+                chunk_rows = min(self.chunk_size_pixels, height)
+
+                # Process raster in chunks
+                for col_off in range(0, width, chunk_cols):
+                    for row_off in range(0, height, chunk_rows):
+                        self.logger.info(f"\nProcessing chunk at col: {col_off}, row: {row_off}")
+                        
+                        # Read raster chunk
+                        window = Window(col_off, row_off, chunk_cols, chunk_rows)
+                        data_chunk = src.read(1, window=window, masked=True)
+                        chunk_transform = src.window_transform(window)
+                        
+                        # Generate and collect points for this chunk
+                        points.extend(self._generate_chunk_points(data_chunk, chunk_transform))
+                        
+                        self.logger.info(f"Generated {len(points)} points so far...")
+
+        except Exception as e:
+            self.logger.error(f"Error processing raster: {e}")
+            raise
+
+        # Create GeoDataFrame
+        self.logger.info("Creating GeoDataFrame from generated points...")
+        gdf = gpd.GeoDataFrame(points)
+        gdf.set_crs(epsg=self.crs, inplace=True)
+        
+        # Add latitude and longitude columns
+        gdf['latitude'] = gdf.geometry.y
+        gdf['longitude'] = gdf.geometry.x
+        
+        self.logger.info("Point generation complete.")
+        return gdf
+
+def save_training_points(
+    gdf: gpd.GeoDataFrame, 
+    output_file: str, 
+    target_crs: int = 4326
+) -> gpd.GeoDataFrame:
+    """
+    Process and save the training points GeoDataFrame.
+
+    Parameters
+    ----------
+    gdf : gpd.GeoDataFrame
+        Input GeoDataFrame of training points.
+    output_file : str
+        Path to save the output file.
+    target_crs : int, optional
+        Target coordinate reference system. Default is WGS84 (EPSG:4326).
+
+    Returns
+    -------
+    gpd.GeoDataFrame
+        Processed GeoDataFrame.
+    """
+    # Rename value column
+    gdf = gdf.rename(columns={'value': 'class_id'})
     
-    # Create a GeoDataFrame for the points
-    gdf = gpd.GeoDataFrame(points)
-    gdf.set_crs(epsg=crs, inplace=True)
+    # Print the number of rows per class_id
+    class_counts = gdf['class_id'].value_counts()
+    print("Number of rows per class_id:")
+    print(class_counts)
+
+    # Reproject to target CRS
+    gdf = gdf.to_crs(epsg=target_crs)
     
-    gdf["latitude"] = gdf.geometry.y
-    gdf["longitude"] = gdf.geometry.x
+    # Ensure lat/long columns are updated
+    gdf['latitude'] = gdf.geometry.y
+    gdf['longitude'] = gdf.geometry.x
+    
+    # Export to file
+    gdf.to_file(output_file)
     
     return gdf
 
 
-
 if __name__ == '__main__':
-    wks= r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-    raster = os.path.join(wks, 'data', 'training_data', 'training_raster.tif')
-    mask = os.path.join(wks, 'data', 'masks', 'ocean_mask_binary.tif')
+    start_t = timeit.default_timer()
     
-    gdf= generate_training_points(
-        raster, 
-        n_points=5000, 
-        crs=3005,
-    )
+    try:
+        wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
+        raster = os.path.join(wks, 'data', 'training_data', 'training_raster_v5.tif')
+        output_file = os.path.join(wks, 'data', 'training_data', 'training_points_v3.shp')
+        
+        # Generate training points
+        generator = TrainingPointGenerator(
+            raster_path=raster, 
+            n_points=5000, 
+            crs=3005, 
+            dist_from_edge=5, 
+            chunk_size_pixels=20480
+        )
+        gdf = generator.generate_points()
+        
+        # Save processed points
+        gdf = save_training_points(gdf, output_file)
+        
+        # Calculate processing time
+        finish_t = timeit.default_timer()
+        t_sec = round(finish_t - start_t)
+        mins, secs = divmod(t_sec, 60)
+        print(f'\nProcessing Completed in {mins} minutes and {secs} seconds')
     
-    gdf.to_file(os.path.join(wks, 'data', 'training_data', 'training_points.shp'))
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        raise
