@@ -45,10 +45,13 @@ class AOIHandler:
 
 
 class S2Processor:
-    def __init__(self, workspace: str, aoi_handler: AOIHandler, ee_authenticator: EEAuthenticator, 
+    def __init__(self, workspace: str, 
+                 aoi_handler: AOIHandler, 
+                 ee_authenticator: EEAuthenticator, 
              target_date: str, time_step: int, cloud_filter: float, 
              cld_prb_thresh: float, nir_drk_thresh: float, 
-             cld_prj_dist: float, buffer: int):
+             cld_prj_dist: float, buffer: int
+    ):
         self.workspace = workspace
         self.aoi_handler = aoi_handler
         self.ee_authenticator = ee_authenticator
@@ -148,6 +151,43 @@ class S2Processor:
         aspect = ee.Terrain.aspect(dem).rename('Aspect')
         tri = dem.reduceNeighborhood(reducer=ee.Reducer.stdDev(), kernel=ee.Kernel.square(3)).rename('TRI')
         return img.addBands([elevation, slope, aspect, tri])
+    
+    @staticmethod
+    def add_temporal_metrics(img, col, aoi):
+        """
+        Adds descriptive statistics to the S2 mosaic.
+        Metrics: Mean, Median, Min, Max, StdDev, Percentiles (10th, 50th, 90th), and IQR (75th - 25th).
+        """
+        bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7','B8', 'B8A', 'B11', 'B12']
+    
+        # Core statistics
+        mean_img = col.select(bands).mean().clip(aoi).rename([f'{band}_Mean' for band in bands])
+        median_img = col.select(bands).median().clip(aoi).rename([f'{band}_Median' for band in bands])
+        min_img = col.select(bands).min().clip(aoi).rename([f'{band}_Min' for band in bands])
+        max_img = col.select(bands).max().clip(aoi).rename([f'{band}_Max' for band in bands])
+        std_img = col.select(bands).reduce(ee.Reducer.stdDev()).clip(aoi).rename([f'{band}_StdDev' for band in bands])
+    
+        # Percentiles
+        percentiles = col.select(bands).reduce(
+            ee.Reducer.percentile([10, 50, 90])
+        ).clip(aoi).rename(
+            [f'{band}_P10' for band in bands] +
+            [f'{band}_P50' for band in bands] +
+            [f'{band}_P90' for band in bands]
+        )
+        
+        # Interquartile Range (IQR = P75 - P25)
+        p75_img = col.select(bands).reduce(
+            ee.Reducer.percentile([75])
+        ).clip(aoi).rename([f'{band}_P75' for band in bands])
+        
+        p25_img = col.select(bands).reduce(
+            ee.Reducer.percentile([25])
+        ).clip(aoi).rename([f'{band}_P25' for band in bands])
+        
+        iqr_img = p75_img.subtract(p25_img).rename([f'{band}_IQR' for band in bands])
+    
+        return img.addBands([mean_img, median_img, min_img, max_img, std_img, percentiles, iqr_img])
 
 if __name__ == '__main__':
     start_t = timeit.default_timer()
@@ -186,6 +226,9 @@ if __name__ == '__main__':
 
     print ('\nAdding Terrain bands to the s2 mosaic')
     s2_mosaic = S2.add_terrain(s2_mosaic, AOI.aoi)
+    
+    print ('\nAdding descriptive stats to the s2 mosaic')
+    #s2_mosaic = S2.add_temporal_metrics(s2_mosaic, col_wmsks, AOI.aoi)
 
     finish_t = timeit.default_timer()
     t_sec = round(finish_t - start_t)
