@@ -10,7 +10,9 @@ Generate training data for Land Cover classification:
     The n_points parameter defines the number of points generated per chunk. 
     This number may be reduced if there are not enough available pixels.
 
-    Edge pixels are excluded to prevent potential misalignment and mixed-pixel issues.
+    Edge pixels are excluded to prevent potential misalignment and mixed-pixels.
+    
+    The generated points are split 80/20 to create training and test datasets. 
     
 Author: Moez Labiadh
 """
@@ -25,8 +27,10 @@ import rasterio
 from rasterio.windows import Window
 from scipy.ndimage import binary_erosion
 
+import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
+from sklearn.model_selection import train_test_split
 
 import timeit
 
@@ -198,22 +202,24 @@ class TrainingPointGenerator:
         gdf['longitude'] = gdf.geometry.x
         
         self.logger.info("Point generation complete.")
+        
         return gdf
 
-def save_training_points(
+def process_train_test(
     gdf: gpd.GeoDataFrame, 
-    output_file: str, 
+    output_path: str, 
     target_crs: int = 4326
 ) -> gpd.GeoDataFrame:
     """
-    Process and save the training points GeoDataFrame.
+    Split the generated points into train and test (80/20)
+    and save to seperate files.
 
     Parameters
     ----------
     gdf : gpd.GeoDataFrame
-        Input GeoDataFrame of training points.
-    output_file : str
-        Path to save the output file.
+        Input GeoDataFrame of generated points.
+    output_path : str
+        Path to save the output files.
     target_crs : int, optional
         Target coordinate reference system. Default is WGS84 (EPSG:4326).
 
@@ -237,10 +243,31 @@ def save_training_points(
     gdf['latitude'] = gdf.geometry.y
     gdf['longitude'] = gdf.geometry.x
     
-    # Export to file
-    gdf.to_file(output_file)
+    # Split 80/20 based on class_id
+    train_list = []
+    test_list = []
+
+    # Split by unique class_id
+    for class_id in gdf['class_id'].unique():
+        gdf_class = gdf[gdf['class_id'] == class_id]
+        
+        # Perform train-test split for each class
+        train, validate = train_test_split(gdf_class, test_size=0.2, random_state=42)
+        
+        # Collect the splits
+        train_list.append(train)
+        test_list.append(validate)
+
+    # Concatenate into final GeoDataFrames
+    gdf_train = gpd.GeoDataFrame(pd.concat(train_list, ignore_index=True), crs=gdf.crs)
+    gdf_test= gpd.GeoDataFrame(pd.concat(test_list, ignore_index=True), crs=gdf.crs)
     
-    return gdf
+    # Export to file
+    gdf_train.to_file(os.path.join(output_path, 'points_train.shp'))
+    gdf_test.to_file(os.path.join(output_path, 'points_test.shp'))
+    
+    return gdf_train, gdf_test
+
 
 
 if __name__ == '__main__':
@@ -262,7 +289,8 @@ if __name__ == '__main__':
         gdf = generator.generate_points()
         
         # Save processed points
-        gdf = save_training_points(gdf, output_file)
+        output_path = os.path.join(wks, 'data', 'training_data')
+        gdf_train, gdf_test = process_train_test(gdf, output_path)
         
         # Calculate processing time
         finish_t = timeit.default_timer()
