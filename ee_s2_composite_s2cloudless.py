@@ -229,7 +229,7 @@ if __name__ == '__main__':
     
     print ('\nAdding descriptive stats to the s2 mosaic')
     #s2_mosaic = S2.add_temporal_metrics(s2_mosaic, col_wmsks, AOI.aoi)
-
+    
     finish_t = timeit.default_timer()
     t_sec = round(finish_t - start_t)
     mins, secs = divmod(t_sec, 60)
