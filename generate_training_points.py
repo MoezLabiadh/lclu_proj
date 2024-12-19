@@ -275,15 +275,14 @@ if __name__ == '__main__':
     
     try:
         wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-        raster = os.path.join(wks, 'data', 'training_data', 'training_raster_v5.tif')
-        output_file = os.path.join(wks, 'data', 'training_data', 'training_points_v3.shp')
+        raster = os.path.join(wks, 'data', 'training_data', 'training_raster_v6.tif')
         
         # Generate training points
         generator = TrainingPointGenerator(
             raster_path=raster, 
-            n_points=5000, 
+            n_points=1000, 
             crs=3005, 
-            dist_from_edge=5, 
+            dist_from_edge=4, 
             chunk_size_pixels=20480
         )
         gdf = generator.generate_points()
