@@ -236,8 +236,7 @@ print('All features Mosaic:', allMosaic);
 
 
 print('Running the classification');
-var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/training_points_bc_reduced')
-                        .filterBounds(AOI_med);
+var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/training_points_bc_reduced');
                         
 //var bands = allMosaic.bandNames();
 
