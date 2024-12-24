@@ -33,7 +33,8 @@ shp_aoi = os.path.join(wks, "data", "AOIs" ,"bc.shp")
     
     
 gdf = gpd.read_file(shp_aoi)
-tile_size = 50000  # 50 km
+tile_size = 200000  # 200 km2
 tiles_gdf = create_grid(gdf, tile_size)
+tiles_gdf.to_file(os.path.join(wks, "data", "AOIs" ,"bc_tiles_200km.shp"))
 
 
