@@ -86,5 +86,5 @@ if __name__ == '__main__':
     gdf= generate_random_points(nbr_folder, -1, -0.4)
     
     # Save the GeoDataFrame to a shapefile
-    #output_file = os.path.join(output_folder, f"{os.path.splitext(file_name)[0]}_points.shp")
-    #gdf.to_file(output_file)
+    output_file = os.path.join(wks, "data", "burned_areas", "nbr_extracted_points.shp")
+    gdf.to_file(output_file)
