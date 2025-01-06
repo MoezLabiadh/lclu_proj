@@ -1,8 +1,7 @@
 """
 Apply a Sieve filter to cleanup classification results
-    The default Minimum Mapping Unit (MMU) is 50 pixels (0.5 ha)
-    The default connectedness parameter uses the Von Neumann neighborhood 
-    (connectedness=4).
+    The default Minimum Mapping Unit (MMU) - Threshold is 50 pixels (0.5 ha)
+    The default connectedness uses the Von Neumann neighborhood (connectedness=4).
 """
 
 import os
@@ -18,6 +17,8 @@ def apply_sieve_filter(input_raster, output_raster, threshold=50, connectedness=
         input_raster (str): Path to the input raster file.
         output_raster (str): Path to the output raster file.
         threshold_size (int): Minimum size (in pixels) for sieve operation.
+        threshold_size (int): Nbr of connecting pixels, Von Neumann neighborhood (4) 
+                              or Moore neighborhood (8).
     """
     # Register all drivers
     gdal.AllRegister()
