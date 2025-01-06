@@ -1,5 +1,6 @@
 """
 Apply a Majority filter to smooth classification results
+The default kernel size is 5*5
 """
 import os
 import rasterio
