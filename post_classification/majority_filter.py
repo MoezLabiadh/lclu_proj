@@ -23,7 +23,7 @@ def apply_majority_filter(input_raster, output_raster, kernel_size=5):
         
         profile.update(dtype='uint8', compress='lzw')
 
-        print (f'Reading input raster: {os.basename(input_raster)}')
+        print (f'Reading input raster: {os.path.basename(input_raster)}')
         data = src.read(1, masked=False)
         
         print ('Applying the Majority Filter function')
@@ -49,3 +49,8 @@ if __name__ == "__main__":
     input_raster = os.path.join(wks, 'classification', 'Tile19_MODIS.tif')
     output_raster = os.path.join(wks, 'classification', 'Tile19_majFilter_kernel5.tif')
     apply_majority_filter(input_raster, output_raster, kernel_size=5)
+    
+    finish_t = timeit.default_timer()
+    t_sec = round(finish_t - start_t)
+    mins, secs = divmod(t_sec, 60)
+    print(f'\nProcessing Completed in {mins} minutes and {secs} seconds')
