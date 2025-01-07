@@ -10,7 +10,7 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 import timeit
 
-def fill_gaps_nearest_neighbor(data, nodata_value=0):
+def nearest_neighbor_func(data, nodata_value=0):
     """
     Fill gaps in a raster using Nearest Neighbor Interpolation, excluding real NoData pixels.
 
@@ -36,7 +36,7 @@ def fill_gaps_nearest_neighbor(data, nodata_value=0):
     
     return filled_data
 
-def main(input_raster, output_raster, aoi, nodata_value=0):
+def fill_gaps(input_raster, output_raster, aoi, nodata_value=0):
     """
     Main function to fill gaps in a GeoTIFF raster only within a polygon from a shapefile.
 
@@ -50,7 +50,7 @@ def main(input_raster, output_raster, aoi, nodata_value=0):
     print(f'Reading input raster: {os.path.basename(input_raster)}')
     with rasterio.open(input_raster) as src:
         # Read the data and metadata
-        data = src.read(1)  # Read the first band
+        data = src.read(1)
         profile = src.profile  # Get metadata (e.g., CRS, transform, etc.)
         transform = src.transform
         
@@ -64,7 +64,7 @@ def main(input_raster, output_raster, aoi, nodata_value=0):
             geometries=aoi.geometry,
             out_shape=data.shape,
             transform=transform,
-            invert=True  # Invert to mask outside the polygon
+            invert=True  # invert to mask outside the polygon
         )
 
         # Apply the mask to exclude areas outside the polygon
@@ -72,22 +72,26 @@ def main(input_raster, output_raster, aoi, nodata_value=0):
 
         # Fill gaps (0 values) only within the polygon
         print('Filling the gaps')
-        filled_data = fill_gaps_nearest_neighbor(masked_data, nodata_value=nodata_value)
+        filled_data = nearest_neighbor_func(masked_data, nodata_value=nodata_value)
 
         # Merge filled data back into the original raster
         output_data = np.where(polygon_mask, filled_data, data)
 
-        # Update the metadata
-        profile.update(dtype=rasterio.float32)
+        # Cast the data to uint8
+        output_data = output_data.astype(np.uint8)
+
+        # Update the metadata for 8-bit format
+        profile.update(dtype=rasterio.uint8)
 
     # Save the filled raster to a new GeoTIFF
     print(f'Saving the output raster: {os.path.basename(output_raster)}')
     with rasterio.open(output_raster, 'w', **profile) as dst:
-        dst.write(output_data.astype(rasterio.float32), 1)
+        dst.write(output_data, 1)
 
 if __name__ == "__main__":
     start_t = timeit.default_timer()
     
+    #inputs
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     aoi_shp = os.path.join(wks, 'data' ,'AOIs', 'bc_tiles_200km_modified.shp')
     gdf = gpd.read_file(aoi_shp)
@@ -96,4 +100,9 @@ if __name__ == "__main__":
 
     # Run the script
     gdf = gdf[gdf['tile_id'] == 19]
-    main(input_raster, output_raster, gdf, nodata_value=0)
+    fill_gaps(input_raster, output_raster, gdf, nodata_value=0)
+    
+    finish_t = timeit.default_timer()
+    t_sec = round(finish_t - start_t)
+    mins, secs = divmod(t_sec, 60)
+    print(f'\nProcessing Completed in {mins} minutes and {secs} seconds')
