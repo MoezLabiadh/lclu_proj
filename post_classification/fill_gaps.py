@@ -36,6 +36,7 @@ def nearest_neighbor_func(data, nodata_value=0):
     
     return filled_data
 
+
 def fill_gaps(input_raster, output_raster, aoi, nodata_value=0):
     """
     Main function to fill gaps in a GeoTIFF raster only within a polygon from a shapefile.
@@ -87,6 +88,8 @@ def fill_gaps(input_raster, output_raster, aoi, nodata_value=0):
     print(f'Saving the output raster: {os.path.basename(output_raster)}')
     with rasterio.open(output_raster, 'w', **profile) as dst:
         dst.write(output_data, 1)
+
+
 
 if __name__ == "__main__":
     start_t = timeit.default_timer()
