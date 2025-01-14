@@ -1,3 +1,6 @@
+
+//************************************************** SENTINEL-2 ***********************************************************************//
+
 // Function to get Sentinel-2 Surface Reflectance and Cloud Probability Collections
 function getS2SrCldCol(aoi, startDate, endDate, cloudFilter) {
   var s2SrCol = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
@@ -51,7 +54,8 @@ function addCldShdwMask(img, cldPrbThresh, nirDrkThresh, cldPrjDist, buffer) {
 // Function to apply the cloud and shadow mask
 function applyCldShdwMask(img) {
   var notCldShdw = img.select('cloudmask').not();
-  return img.select('B.*').updateMask(notCldShdw);
+   return img.select(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 
+                      'B8', 'B8A', 'B11', 'B12']).updateMask(notCldShdw);
 }
 
 // Function to add spectral indices
@@ -91,9 +95,11 @@ function addIndices(img) {
 }
 
 
+//************************************************** SENTINEL-1 ***********************************************************************//
 
-// Function to get Sentinel-1 mosaic and descriptive stats
-function getS1Stats(aoi, startDate, endDate) {
+// Function to get Sentinel-1 features and descriptive stats
+function getS1bands(aoi, startDate, endDate) {
+  // Load Sentinel-1 ImageCollection
   var s1Col = ee.ImageCollection('COPERNICUS/S1_GRD')
     .filterBounds(aoi)
     .filterDate(startDate, endDate)
@@ -102,38 +108,85 @@ function getS1Stats(aoi, startDate, endDate) {
     .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
     .filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'))
     .sort('system:time_start', false);
+ 
+  // Compute Mean for VV and VH
+  var vvMean = s1Col.select('VV').mean().rename('VV_Mean');
+  var vhMean = s1Col.select('VH').mean().rename('VH_Mean');
 
-  var meanBands = s1Col.select(['VV', 'VH']).mean();
+  // Compute Variance for VV and VH
+  var vvVariance = s1Col.select('VV').reduce(ee.Reducer.variance()).rename('VV_Variance');
+  var vhVariance = s1Col.select('VH').reduce(ee.Reducer.variance()).rename('VH_Variance');
+
+  // Compute Standard Deviation for VV and VH
+  var vvStdDev = s1Col.select('VV').reduce(ee.Reducer.stdDev()).rename('VV_StdDev');
+  var vhStdDev = s1Col.select('VH').reduce(ee.Reducer.stdDev()).rename('VH_StdDev');
+
+  // Compute Percentiles for VV and VH
+  var vvPercentiles = s1Col.select('VV').reduce(ee.Reducer.percentile([10, 25, 75, 90]));
+  var vhPercentiles = s1Col.select('VH').reduce(ee.Reducer.percentile([10, 25, 75, 90]));
+
+  // Extract specific percentiles
+  var vvPerc10 = vvPercentiles.select('VV_p10').rename('VV_Perc10');
+  var vvPerc25 = vvPercentiles.select('VV_p25');
+  var vvPerc75 = vvPercentiles.select('VV_p75');
+  var vvPerc90 = vvPercentiles.select('VV_p90').rename('VV_Perc90');
+  var vvIQR = vvPerc75.subtract(vvPerc25).rename('VV_IQR');
+
+  var vhPerc10 = vhPercentiles.select('VH_p10').rename('VH_Perc10');
+  var vhPerc25 = vhPercentiles.select('VH_p25');
+  var vhPerc75 = vhPercentiles.select('VH_p75');
+  var vhPerc90 = vhPercentiles.select('VH_p90').rename('VH_Perc90');
+  var vhIQR = vhPerc75.subtract(vhPerc25).rename('VH_IQR');
+
+  // Compute additional bands using VV_Mean and VH_Mean
+  var rvi = vhMean.multiply(4).divide(vvMean.add(vhMean)).rename('RVI');
+  var vhVvRatio = vhMean.divide(vvMean).rename('Ratio_VH_VV');
+  var ndpi = vvMean.subtract(vhMean).divide(vvMean.add(vhMean)).rename('NDPI');
+  var dpd = vvMean.subtract(vhMean).rename('DPD');
+  var pdi = vvMean.subtract(vhMean).divide(vvMean).rename('PDI');
+  var wri = vvMean.add(vhMean).divide(vvMean.subtract(vhMean)).rename('WRI');
+
+  // Compute GLCM Texture Metrics for VV and VH
+  var glcmVV = vvMean.unitScale(0, 1).multiply(255).toByte().glcmTexture({
+    size: 3
+  });
+  var glcmVH = vhMean.unitScale(0, 1).multiply(255).toByte().glcmTexture({
+    size: 3
+  });
   
-  var percentiles = s1Col.reduce(ee.Reducer.percentile([10, 50, 90]));
-  var p75 = s1Col.reduce(ee.Reducer.percentile([75]));
-  var p25 = s1Col.reduce(ee.Reducer.percentile([25]));
-  var iqr = p75.subtract(p25).rename(p75.bandNames()
-                             .map(function(name) { return ee.String(name).cat('_IQR'); }));
+  // Select relevant GLCM bands for land cover mapping
+  var glcmBandsVV = glcmVV.select(
+    ['VV_Mean_contrast', 'VV_Mean_corr', 'VV_Mean_ent', 'VV_Mean_var', 'VV_Mean_diss'],
+    ['GLCM_VV_Contrast', 'GLCM_VV_Correlation', 'GLCM_VV_Entropy', 'GLCM_VV_Variance', 'GLCM_VV_Dissimilarity']
+  );
+  var glcmBandsVH = glcmVH.select(
+    ['VH_Mean_contrast', 'VH_Mean_corr', 'VH_Mean_ent', 'VH_Mean_var', 'VH_Mean_diss'],
+    ['GLCM_VH_Contrast', 'GLCM_VH_Correlation', 'GLCM_VH_Entropy', 'GLCM_VH_Variance', 'GLCM_VH_Dissimilarity']
+  );
 
-  return meanBands.rename(meanBands.bandNames()).addBands(percentiles).addBands(iqr);
-}
+  // Combine metrics into a single image
+  var s1Bands = vvMean
+    .addBands(vhMean)
+    .addBands(vvVariance)
+    .addBands(vhVariance)
+    .addBands(vvStdDev)
+    .addBands(vhStdDev)
+    .addBands(vvPerc10)
+    .addBands(vvPerc90)
+    .addBands(vvIQR)
+    .addBands(vhPerc10)
+    .addBands(vhPerc90)
+    .addBands(vhIQR)
+    .addBands(rvi)
+    .addBands(vhVvRatio)
+    .addBands(ndpi)
+    .addBands(dpd)
+    .addBands(pdi)
+    .addBands(wri)
+    .addBands(glcmBandsVV)
+    .addBands(glcmBandsVH);
 
-// Function to add polarimetric indices
-function addPolIndices(image) {
-  var rvi = image.select('VH').multiply(4).divide(
-    image.select('VV').add(image.select('VH'))).rename('RVI');
-
-  var vhVvRatio = image.select('VH').divide(
-    image.select('VV')).rename('Ratio_VH_VV');
-
-  var ndpi = image.select('VV').subtract(image.select('VH')).divide(
-    image.select('VV').add(image.select('VH'))).rename('NDPI');
-
-  var dpd = image.select('VV').subtract(image.select('VH')).rename('DPD');
-
-  var pdi = image.select('VV').subtract(image.select('VH')).divide(
-    image.select('VV')).rename('PDI');
-
-  var wri = image.select('VV').add(image.select('VH')).divide(
-    image.select('VV').subtract(image.select('VH'))).rename('WRI');
-
-  return image.addBands([vhVvRatio, rvi, ndpi, dpd, pdi, wri]);
+  return s1Bands;
 }
 
 
@@ -163,10 +216,70 @@ function getVIIRSradiance(img, startDate, endDate, aoi) {
 }
 
 
-// Main Process
+// Function to get MODIS burned areas (2022 - 2024)
+function getMODISburned(img, aoi) {
+
+  // Load MODIS burned area dataset
+  var dataset = ee.ImageCollection('MODIS/061/MCD64A1')
+                  .filter(ee.Filter.date('2022-01-01', '2024-12-31'))
+                  .filterBounds(aoi);
+
+  // Calculate mean burned area
+  var burnedArea = dataset.select('BurnDate').mean();
+  
+  // Set burned pixels to 1 and unmask the rest with 0
+  var burnedBinary = burnedArea.gt(0).rename('burned').unmask(0).clip(AOI_BC);
+
+  // Add the burned band to the input image
+  return img.addBands([burnedBinary]);
+}
+
+
+function getEsriLC(img, aoi) {
+  function remapper(image) {
+    var remapped = image.remap([1, 2, 4, 5, 7, 8, 9, 10, 11],
+                               [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    return remapped;
+  }
+
+  var esri_lulc10 = ee.ImageCollection("projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m_TS");
+
+  var esri2023 = esri_lulc10.filterDate('2023-01-01', '2023-12-31')
+                            .map(remapper)
+                            .mosaic()
+                            .clip(aoi)
+                            .rename('esri2023lc');
+
+  return img.addBands([esri2023]);
+}
+
+
+function getDwLC(img, aoi) {
+  var collection = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                  .filterDate('2024-05-15', '2024-09-15');
+  
+  // Function to get the most common land cover for each pixel
+  var mostCommon = collection.map(function(image) {
+    return image.select('label').clip(aoi);
+  }).reduce(ee.Reducer.mode());
+  
+  var dw = mostCommon.rename('dw');
+
+  return img.addBands([dw]);
+}
+
+
+
+
+//******************************************************* DATA PREP***********************************************************************//
+
+
 var targetDate_summer = '2024-07-15';
 var targetDate_fall = '2024-09-15';
+var targetDate_s1nogap = '2024-06-01';
+var timeStep_s1 = 180;
 var timeStep = 30;
+
 var cloudFilter = 80;
 var cldPrbThresh = 50;
 var nirDrkThresh = 0.15;
@@ -206,77 +319,76 @@ print('S2 Mosaic:', s2Mosaic_sumFall);
 
 
 
-// Create S1 summer and fall mosaics
-var s1Stats_summer = getS1Stats(AOI_BC, 
-                                ee.Date(targetDate_summer).advance(-timeStep, 'day'), 
-                                ee.Date(targetDate_summer).advance(timeStep, 'day'));
-var s1Mosaic_summer = addPolIndices(s1Stats_summer).rename(ee.List(addPolIndices(s1Stats_summer).bandNames())
-                                                    .map(function(name) { return ee.String(name).cat('_summer'); }));
 
-var s1Stats_fall = getS1Stats(AOI_BC, 
-                              ee.Date(targetDate_fall).advance(-timeStep, 'day'), 
-                              ee.Date(targetDate_fall).advance(timeStep, 'day'));
-var s1Mosaic_fall = addPolIndices(s1Stats_fall).rename(ee.List(addPolIndices(s1Stats_fall).bandNames())
-                                               .map(function(name) { return ee.String(name).cat('_fall'); }));
+// Get Sentinel-1 Features
+var s1Features = getS1bands(AOI_BC, 
+                         ee.Date(targetDate_s1nogap).advance(-timeStep_s1, 'day'), 
+                         ee.Date(targetDate_s1nogap).advance(timeStep_s1, 'day'));
 
-// Merge S1 summer and fall mosaics
-var s1Mosaic_sumFall = s1Mosaic_summer.addBands(s1Mosaic_fall);
-print('S1 Mosaic:', s1Mosaic_sumFall);
+print('S1 Mosaic:', s1Features);
+
+
 
 
 // Merge all input features: S1, S2, terrain and radiance
-var allMosaic = s2Mosaic_sumFall.addBands(s1Mosaic_sumFall);
+var allMosaic = s2Mosaic_sumFall.addBands(s1Features);
+
 var allMosaic = addTerrain(allMosaic, AOI_BC);
+
+
 var allMosaic = getVIIRSradiance(allMosaic, 
                                 ee.Date(targetDate_summer).advance(-timeStep, 'day'), 
                                 ee.Date(targetDate_summer).advance(timeStep, 'day'), 
                                 AOI_BC);
-                                
+
+var allMosaic = getMODISburned (allMosaic, AOI_BC);
+
+//var allMosaic = getDwLC(allMosaic, AOI_BC);  
+//var allMosaic =  getEsriLC(allMosaic, AOI_BC);
+
 print('All features Mosaic:', allMosaic);
 
 
-print('Running the classification');
-var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/training_points_bc_reduced');
+
+//******************************************************* CLASSIFICATION***********************************************************************//
+var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/points_train_reduced_v8')
+                              .filterBounds(points_train_AOI_70k);
+
+var trainingPointsSize = trainingPoints.size();
+print('Number of training points:', trainingPointsSize);
                         
-//var bands = allMosaic.bandNames();
+var bands = allMosaic.bandNames();
+
+print ('Bands used in classification:', bands);
 
 
-var bands = [
-  'B1_summer', 'B2_summer', 'B3_summer', 'B4_summer', 'B5_summer', 'B6_summer', 'B7_summer', 
-  'B8_summer', 'B8A_summer', 'B9_summer', 'B11_summer', 'B12_summer', 'NDVI_summer', 
-  'EVI_summer', 'NDRE_summer', 'SAVI_summer', 'MNDWI_summer', 'NDMI_summer', 'NBR_summer', 
-  'BSI_summer', 'BAEI_summer', 'NBAI_summer', 'NDSI_summer', 
-  
-  'VV_summer', 'VH_summer', 'Ratio_VH_VV_summer', 
-  'RVI_summer', 'NDPI_summer', 'DPD_summer', 'PDI_summer', 'WRI_summer', 
-  'VV_p10_summer', 'VV_p50_summer', 'VV_p90_summer', 'VV_p75_IQR_summer',
-  'VH_p10_summer', 'VH_p50_summer', 'VH_p90_summer', 'VH_p75_IQR_summer',
-  
-  'B1_fall', 'B2_fall', 'B3_fall', 'B4_fall', 'B5_fall', 'B6_fall', 'B7_fall', 
-  'B8_fall', 'B8A_fall', 'B9_fall', 'B11_fall', 'B12_fall', 'NDVI_fall', 
-  'EVI_fall', 'NDRE_fall', 'SAVI_fall', 'MNDWI_fall', 'NDMI_fall', 'NBR_fall', 
-  'BSI_fall', 'BAEI_fall', 'NBAI_fall',  'NDSI_fall', 
-  
-  'VV_fall', 'VH_fall', 'Ratio_VH_VV_fall', 
-  'RVI_fall', 'NDPI_fall', 'DPD_fall', 'PDI_fall', 'WRI_fall', 
-  'VV_p10_fall', 'VV_p50_fall', 'VV_p90_fall', 'VV_p75_IQR_fall',
-  'VH_p10_fall', 'VH_p50_fall', 'VH_p90_fall', 'VH_p75_IQR_fall',
-  
-  'Elevation', 'Slope', 'Aspect', 'TRI', 'avg_rad'];
+// Define tile size in meters (approximately 100 km)
+var tileSize = 100000;  // 100 km in meters
 
-  
-// Feature extraction
-var training = allMosaic.select(bands).sampleRegions({
-  collection: trainingPoints,
-  properties: ['class_id'],
-  scale: 10
-});
+// Create grid of 100km tiles
+var tiles = trainingPoints.geometry().coveringGrid('EPSG:4326', tileSize);
 
+// Function to sample points within each tile
+var sampleTile = function(tile) {
+  // Filter points within the current tile
+  var pointsInTile = trainingPoints.filterBounds(tile.geometry());
+
+  // Sample points within the tile
+  var sampledPoints = allMosaic.select(bands).sampleRegions({
+    collection: pointsInTile,
+    properties: ['class_id'],
+    scale: 10
+  });
+  return sampledPoints;
+};
+
+// Map over all tiles and flatten results
+var training = tiles.map(sampleTile).flatten();
 
 
 // Train classifier: Random Forest
 var classifier = ee.Classifier.smileRandomForest({
-  numberOfTrees: 1000
+  numberOfTrees: 500
 }).train({
   features: training,
   classProperty: 'class_id',
@@ -284,38 +396,33 @@ var classifier = ee.Classifier.smileRandomForest({
 });
 
 
-/*
-// Train classifier: Gradient boost
-var classifier = ee.Classifier.smileGradientTreeBoost({
-  numberOfTrees: 500, 
-  shrinkage: 0.01, 
-  samplingRate: 0.6, 
-  maxNodes: 30, 
-  loss: 'Huber', 
-  seed: 42
-}).train({
-  features: training,
-  classProperty: 'class_id',
-  inputProperties: bands
-});
-*/
+// Classify the image 
+var tiles = ee.FeatureCollection("projects/ee-lclu-bc/assets/bc_tiles_200km_modified");
+var tile13 = tiles.filter(ee.Filter.eq('tile_id', 13));
 
-
-// Classify the image
-var classified = allMosaic.clip(AOI_med).select(bands).classify(classifier).toUint8();
-
-print('Exporting the classified image to Asset.');
+var classified = allMosaic.clip(tile13).select(bands).classify(classifier).toUint8();
 
 Export.image.toAsset({
   image: classified,
-  description: 'LandCover_AOImed_trainingBC_RF1000',
-  assetId: 'projects/ee-lclu-bc/assets/LandCover_AOImed_trainingBC_RF1000',
+  description: 'LandCover_tile13_training70k_RF500_v8',
+  assetId: 'projects/ee-lclu-bc/assets/LandCover_tile13_training70k_RF500_v8',
   scale: 10,
-  region: AOI_med,
+  region: tile13,
   maxPixels: 1e13
 });
 
+
 /*
+// Export classifier as asset
+print('Exporting the classifier as Asset');
+Export.classifier.toAsset({
+  classifier: classifier,
+  description: 'classifier_RF500_allBands_train94k',
+  assetId: 'projects/ee-lclu-bc/assets/classifier_RF500_allBands_train94k',
+  priority: 100
+});
+
+
 Map.centerObject(AOI_BC, 8);
 Map.addLayer(s2Mosaic_sumFall.clip(AOI_BC), {bands: ['B8_summer', 'B4_summer', 'B3_summer'], min: 0, max: 3000}, 'S2 Mosaic Summer');
 Map.addLayer(s2Mosaic_sumFall.clip(AOI_BC), {bands: ['B8_fall', 'B4_fall', 'B3_fall'], min: 0, max: 3000}, 'S2 Mosaic Fall');
