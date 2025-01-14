@@ -398,16 +398,16 @@ var classifier = ee.Classifier.smileRandomForest({
 
 // Classify the image 
 var tiles = ee.FeatureCollection("projects/ee-lclu-bc/assets/bc_tiles_200km_modified");
-var tile13 = tiles.filter(ee.Filter.eq('tile_id', 13));
+var tile19 = tiles.filter(ee.Filter.eq('tile_id', 19));
 
-var classified = allMosaic.clip(tile13).select(bands).classify(classifier).toUint8();
+var classified = allMosaic.clip(tile19).select(bands).classify(classifier).toUint8();
 
 Export.image.toAsset({
   image: classified,
-  description: 'LandCover_tile13_training70k_RF500_v8',
-  assetId: 'projects/ee-lclu-bc/assets/LandCover_tile13_training70k_RF500_v8',
+  description: 'LandCover_tile19_training70k_RF500_v8',
+  assetId: 'projects/ee-lclu-bc/assets/LandCover_tile19_training70k_RF500_v8',
   scale: 10,
-  region: tile13,
+  region: tile19,
   maxPixels: 1e13
 });
 
