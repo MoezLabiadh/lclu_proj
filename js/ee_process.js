@@ -189,6 +189,7 @@ function getS1bands(aoi, startDate, endDate) {
   return s1Bands;
 }
 
+//************************************************** OTHER LAYERS ***********************************************************************//
 
 // Function to add terrain bands
 function addTerrain(img, aoi) {
@@ -343,16 +344,17 @@ var allMosaic = getVIIRSradiance(allMosaic,
 
 var allMosaic = getMODISburned (allMosaic, AOI_BC);
 
-//var allMosaic = getDwLC(allMosaic, AOI_BC);  
-//var allMosaic =  getEsriLC(allMosaic, AOI_BC);
+var allMosaic = getDwLC(allMosaic, AOI_BC);  
+var allMosaic =  getEsriLC(allMosaic, AOI_BC);
 
 print('All features Mosaic:', allMosaic);
 
 
 
 //******************************************************* CLASSIFICATION***********************************************************************//
-var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/points_train_reduced_v8')
-                              .filterBounds(points_train_AOI_70k);
+
+var trainingPoints = ee.FeatureCollection('projects/ee-lclu-bc/assets/points_train_reduced_v10_noBR')
+                              .filterBounds(AOI_training_v3);
 
 var trainingPointsSize = trainingPoints.size();
 print('Number of training points:', trainingPointsSize);
@@ -398,16 +400,16 @@ var classifier = ee.Classifier.smileRandomForest({
 
 // Classify the image 
 var tiles = ee.FeatureCollection("projects/ee-lclu-bc/assets/bc_tiles_200km_modified");
-var tile19 = tiles.filter(ee.Filter.eq('tile_id', 19));
+var tile24 = tiles.filter(ee.Filter.eq('tile_id', 24));
 
-var classified = allMosaic.clip(tile19).select(bands).classify(classifier).toUint8();
+var classified = allMosaic.clip(tile24).select(bands).classify(classifier).toUint8();
 
 Export.image.toAsset({
   image: classified,
-  description: 'LandCover_tile19_training70k_RF500_v8',
-  assetId: 'projects/ee-lclu-bc/assets/LandCover_tile19_training70k_RF500_v8',
+  description: 'LandCover_tile24_trainNoBR_RF500_v10',
+  assetId: 'projects/ee-lclu-bc/assets/LandCover_tile24_trainNoBR_RF500_v10',
   scale: 10,
-  region: tile19,
+  region: tile24,
   maxPixels: 1e13
 });
 
@@ -417,8 +419,8 @@ Export.image.toAsset({
 print('Exporting the classifier as Asset');
 Export.classifier.toAsset({
   classifier: classifier,
-  description: 'classifier_RF500_allBands_train94k',
-  assetId: 'projects/ee-lclu-bc/assets/classifier_RF500_allBands_train94k',
+  description: 'classifier_RF_v10 ',
+  assetId: 'projects/ee-lclu-bc/assets/classifier_RF_v10 ',
   priority: 100
 });
 
