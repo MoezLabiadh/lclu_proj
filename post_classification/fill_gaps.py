@@ -98,11 +98,11 @@ if __name__ == "__main__":
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     aoi_shp = os.path.join(wks, 'data' ,'AOIs', 'bc_tiles_200km_modified.shp')
     gdf = gpd.read_file(aoi_shp)
-    input_raster = os.path.join(wks, 'classification', 'Tile19_v5.tif')
-    output_raster = os.path.join(wks, 'classification', 'Tile19_v5_gapFilled.tif')
+    input_raster = os.path.join(wks, 'classification', 'v10' ,'tile45.tif')
+    output_raster = os.path.join(wks, 'classification', 'gap_filled' ,'tile45_gapFilled.tif')
 
     # Run the script
-    gdf = gdf[gdf['tile_id'] == 19]
+    gdf = gdf[gdf['tile_id'] == 45]
     fill_gaps(input_raster, output_raster, gdf, nodata_value=0)
     
     finish_t = timeit.default_timer()
