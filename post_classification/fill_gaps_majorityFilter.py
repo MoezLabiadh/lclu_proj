@@ -3,13 +3,12 @@ import geopandas as gpd
 import rasterio
 from rasterio.features import geometry_mask
 import numpy as np
-from scipy.ndimage import generic_filter
+from scipy.ndimage import generic_filter, binary_dilation
 import timeit
 
 def majority_filter_func(data, nodata_value=0, window_size=3, max_iterations=100):
     """
-    Fill gaps in a raster using an iterative majority filter, excluding real NoData pixels.
-    Continues until all gaps are filled or max_iterations is reached.
+    Fill gaps in a raster using an iterative majority filter, only processing areas near gaps.
 
     Parameters:
         data (numpy.ndarray): 2D array with classified raster data.
@@ -32,25 +31,34 @@ def majority_filter_func(data, nodata_value=0, window_size=3, max_iterations=100
     iteration = 0
     
     while iteration < max_iterations:
-        # Count initial number of NoData pixels
-        initial_nodata_count = np.sum(output_data == nodata_value)
+        # Create gap mask
+        gap_mask = output_data == nodata_value
+        initial_nodata_count = np.sum(gap_mask)
         
         if initial_nodata_count == 0:
             print(f"All gaps filled after {iteration} iterations")
             break
             
-        # Apply mode filter
-        filled_data = generic_filter(
-            output_data,
-            function=mode_filter,
-            size=window_size,
-            mode='constant',
-            cval=nodata_value
-        )
+        # Create processing mask (gaps + surrounding pixels)
+        process_mask = binary_dilation(gap_mask, structure=np.ones((window_size, window_size)))
         
-        # Update only the NoData pixels
-        nodata_mask = (output_data == nodata_value)
-        output_data[nodata_mask] = filled_data[nodata_mask]
+        # Create a temporary array for processing
+        temp_data = output_data.copy()
+        
+        # Only process the areas that need filling
+        if np.any(process_mask):
+            # Apply mode filter only to the processing area
+            filtered_region = generic_filter(
+                temp_data,
+                function=mode_filter,
+                size=window_size,
+                mode='constant',
+                cval=nodata_value
+            )
+            
+            # Update only the NoData pixels within the processing region
+            update_mask = gap_mask & process_mask
+            output_data[update_mask] = filtered_region[update_mask]
         
         # Check if any pixels were filled in this iteration
         final_nodata_count = np.sum(output_data == nodata_value)
@@ -62,12 +70,11 @@ def majority_filter_func(data, nodata_value=0, window_size=3, max_iterations=100
         if pixels_filled == 0:
             window_size += 2
             print(f"Increasing window size to {window_size}")
+            if window_size > 21:  # You can adjust the maximum window size
+                print("Maximum window size reached")
+                break
         
         iteration += 1
-        
-        # Break if no more NoData pixels or if window size gets too large
-        if final_nodata_count == 0 or window_size > 21:  # You can adjust the maximum window size
-            break
     
     if iteration == max_iterations:
         print(f"Reached maximum iterations ({max_iterations}). Some gaps may remain.")
@@ -136,7 +143,7 @@ if __name__ == "__main__":
     aoi_shp = os.path.join(wks, 'data' ,'AOIs', 'bc_tiles_200km_modified.shp')
     gdf = gpd.read_file(aoi_shp)
     input_raster = os.path.join(wks, 'classification', 'v10' ,'tile45.tif')
-    output_raster = os.path.join(wks, 'classification', 'gap_filled' ,'tile45_gapFilled_maj.tif')
+    output_raster = os.path.join(wks, 'classification', 'gap_filled' ,'tile45_gapFilled.tif')
 
     # Run the script
     gdf = gdf[gdf['tile_id'] == 45]
