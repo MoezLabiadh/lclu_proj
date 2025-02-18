@@ -73,7 +73,7 @@ if __name__ == '__main__':
     start_t = timeit.default_timer()
 
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification\validation'
-    points_fp = os.path.join(wks, 'validation_dataset', 'validation_points_tempo_bcAlbers.shp')
+    points_fp = os.path.join(wks, 'validation_dataset', 'validation_points_test.shp')
     raster_fp = os.path.join(wks, 'tiles19_26.tif')
 
     # Define class labels (1 to 9)

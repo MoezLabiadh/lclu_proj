@@ -55,7 +55,7 @@ def calculate_sample_size(Z, p, E):
 if __name__ == "__main__":
     confidence_level = 0.95  # 95% confidence level
     Z = calculate_z(confidence_level)
-    p = 0.4   # Conservative estimate 
+    p = 0.7   # Conservative estimate 
     E = 0.05  # Desired margin of error (5%)
     
     sample_size = calculate_sample_size(Z, p, E)
