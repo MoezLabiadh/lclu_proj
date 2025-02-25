@@ -57,7 +57,7 @@ def apply_sieve_filter(input_raster, output_raster, threshold=25, connectedness=
                      connectedness=connectedness)
 
     # Create the output raster with LZW compression
-    print ('Saving the output raster: {os.path.basename(output_raster)}')
+    print (f'Saving the output raster: {os.path.basename(output_raster)}')
     output_driver = gdal.GetDriverByName('GTiff')
     output_ds = output_driver.Create(
         output_raster,
@@ -88,10 +88,10 @@ if __name__ == "__main__":
     
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
     
-    input_raster = os.path.join(wks, 'classification', 'Tile19_MODIS.tif')
-    output_raster = os.path.join(wks, 'classification', 'Tile19_sieve_thresh50_connect4.tif')
+    input_raster = os.path.join(wks, 'classification', 'mosaic' ,'mosaic_south.tif')
+    output_raster = os.path.join(wks, 'classification', 'mosaic' ,'mosaic_south_sieve_thresh25_connect4.tif')
 
-    apply_sieve_filter(input_raster, output_raster, threshold=50, connectedness=4)
+    apply_sieve_filter(input_raster, output_raster, threshold=25, connectedness=4)
     
     finish_t = timeit.default_timer()
     t_sec = round(finish_t - start_t)
