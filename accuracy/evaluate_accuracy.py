@@ -37,6 +37,7 @@ def sample_raster_values(raster_fp, coords):
     """
     with rasterio.open(raster_fp) as src:
         sampled_vals = list(src.sample(coords))
+        
     predictions = [val[0] for val in sampled_vals]
     valid_indices = [i for i, p in enumerate(predictions) if 1 <= p <= 9]
     filtered_predictions = [predictions[i] for i in valid_indices]
@@ -135,7 +136,7 @@ if __name__ == '__main__':
     start_t = timeit.default_timer()
 
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-    points_fp = os.path.join(wks, 'validation', 'validation_dataset', 'validation_points_test.shp')
+    points_fp = os.path.join(wks, 'validation', 'validation_dataset', 'validation_points_test_all.shp')
     raster_fp = os.path.join(wks, 'classification', 'mosaic', 'mosaic_south_sieve_thresh25_connect4.tif')
 
     # Mapping from numeric IDs to descriptive class labels.
@@ -196,15 +197,15 @@ if __name__ == '__main__':
     report_df = pd.DataFrame(report_dict).transpose()
 
     # Plot and save the confusion matrix heatmap.
-    heatmap_path = os.path.join(wks, 'validation', 'heatmap_confusion_matix.png')
+    heatmap_path = os.path.join(wks, 'validation', 'lclu_heatmap_confusion_matix.png')
     plot_confusion_heatmap(cm_df, heatmap_path)
 
     # Plot and save the classification report heatmap.
-    classification_heatmap_path = os.path.join(wks, 'validation', 'heatmap_classification_report.png')
+    classification_heatmap_path = os.path.join(wks, 'validation', 'lclu_heatmap_classification_report.png')
     plot_classification_report_heatmap(report_df, string_labels, classification_heatmap_path)
 
     # Define the path for the Excel report.
-    excel_file_path = os.path.join(os.path.dirname(heatmap_path), 'accuracy_assesement_summary.xlsx')
+    excel_file_path = os.path.join(os.path.dirname(heatmap_path), 'lclu_accuracy_assesement_summary.xlsx')
     export_accuracy_summary(samples_df, cm_df, report_df, excel_file_path, overall_accuracy, kappa)
     
     
