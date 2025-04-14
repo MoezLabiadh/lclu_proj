@@ -17,12 +17,27 @@ from sklearn.metrics import (confusion_matrix, accuracy_score,
                              cohen_kappa_score, classification_report)
 
 
-def load_evaluation_points(shapefile_fp):
+def esri_to_gdf(file_path):
+    """Returns a Geopandas file (gdf) based on 
+       an ESRI format vector (shp or featureclass/gdb)"""
+    if '.shp' in file_path.lower():
+        gdf = gpd.read_file(file_path)
+    elif '.gdb' in file_path:
+        l = file_path.split('.gdb')
+        gdb = l[0] + '.gdb'
+        fc = os.path.basename(file_path)
+        gdf = gpd.read_file(filename=gdb, layer=fc)
+    else:
+        raise Exception('Format not recognized. Please provide a shp or featureclass (gdb)!')
+    return gdf
+
+
+def load_evaluation_points(points_fp, class_id_colname):
     """
-    Reads evaluation points from a shapefile and returns ground truth class IDs and their coordinates.
+    Reads evaluation points from a spatial file and returns ground truth class IDs and their coordinates.
     """
-    points_gdf = gpd.read_file(shapefile_fp)
-    ground_truth = points_gdf['class_id'].values
+    points_gdf = esri_to_gdf(points_fp)
+    ground_truth = points_gdf[class_id_colname].values
     coords = [(pt.x, pt.y) for pt in points_gdf.geometry]
     
     return ground_truth, coords
@@ -136,8 +151,13 @@ if __name__ == '__main__':
     start_t = timeit.default_timer()
 
     wks = r'Q:\dss_workarea\mlabiadh\workspace\20241118_land_classification'
-    points_fp = os.path.join(wks, 'validation', 'validation_dataset', 'validation_points_test_all.shp')
+    wks_prj = r'Q:\projects\GeoBC\Satelite_Projects\Foundational_LandClass\data\accuracy_assessment'
+    gdb_pts = os.path.join(wks_prj, 'evaluation_data.gdb')
+    
+    points_fp = os.path.join(gdb_pts, 'ground_truth_points_T1')
     raster_fp = os.path.join(wks, 'classification', 'mosaic', 'mosaic_south_sieve_thresh25_connect4.tif')
+    
+    class_id_colname = 'CLASS_ID_PASS2'
 
     # Mapping from numeric IDs to descriptive class labels.
     class_label_mapping = {
@@ -156,7 +176,7 @@ if __name__ == '__main__':
     string_labels = [class_label_mapping[i] for i in numeric_labels]
 
     # Load evaluation points.
-    ground_truth_numeric, coords = load_evaluation_points(points_fp)
+    ground_truth_numeric, coords = load_evaluation_points(points_fp, class_id_colname)
     
     # Count samples per class.
     unique, counts = np.unique(ground_truth_numeric, return_counts=True)
