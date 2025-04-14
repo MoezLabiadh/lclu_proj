@@ -154,11 +154,15 @@ if __name__ == '__main__':
     wks_prj = r'Q:\projects\GeoBC\Satelite_Projects\Foundational_LandClass\data\accuracy_assessment'
     gdb_pts = os.path.join(wks_prj, 'evaluation_data.gdb')
     
-    points_fp = os.path.join(gdb_pts, 'ground_truth_points_T1')
-    raster_fp = os.path.join(wks, 'classification', 'mosaic', 'mosaic_south_sieve_thresh25_connect4.tif')
+    points_fp = os.path.join(gdb_pts, 'ground_truth_points_T6')
+    raster_fp = os.path.join(wks, 'classification', 'mosaic_assessment', 'mosaic_acc_sieve_thresh25_connect4.tif')
     
-    class_id_colname = 'CLASS_ID_PASS2'
+    class_id_colname = 'CLASS_ID_PASS1'
 
+
+    # Load evaluation points.
+    ground_truth_numeric, coords = load_evaluation_points(points_fp, class_id_colname)
+    
     # Mapping from numeric IDs to descriptive class labels.
     class_label_mapping = {
         1: 'Tree cover',
@@ -172,11 +176,8 @@ if __name__ == '__main__':
         9: 'Snow and ice'
     }
     
-    numeric_labels = list(range(1, 10))
+    numeric_labels = list(set(ground_truth_numeric))
     string_labels = [class_label_mapping[i] for i in numeric_labels]
-
-    # Load evaluation points.
-    ground_truth_numeric, coords = load_evaluation_points(points_fp, class_id_colname)
     
     # Count samples per class.
     unique, counts = np.unique(ground_truth_numeric, return_counts=True)
