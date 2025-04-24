@@ -96,10 +96,31 @@ def plot_confusion_heatmap(cm_df, output_image_path):
     Displays the confusion matrix as a heatmap and saves the image.
     """
     plt.figure(figsize=(10, 8))
-    sns.heatmap(cm_df, annot=True, fmt='g', cmap="Blues", cbar=False)
-    plt.title('Confusion Matrix')
-    plt.ylabel('Actual', fontweight='bold')
-    plt.xlabel('Predicted', fontweight='bold')
+    ax = sns.heatmap(
+        cm_df,
+        annot=True,
+        fmt='g',
+        cmap="Blues",
+        cbar=False
+    )
+
+    # enlarge class tick labels
+    ax.set_xticklabels(
+        ax.get_xticklabels(),
+        fontsize=11
+    )
+    ax.set_yticklabels(
+        ax.get_yticklabels(),
+        fontsize=11
+    )
+
+    # make axis titles bigger and bold
+    ax.set_xlabel("Predicted", fontsize=12, fontweight='bold')
+    ax.set_ylabel("Actual", fontsize=12, fontweight='bold')
+
+    # enlarge the overall title
+    plt.title('Confusion Matrix', fontsize=16, fontweight='bold')
+
     plt.tight_layout()
     plt.savefig(output_image_path, dpi=300)
     plt.show()
@@ -108,16 +129,37 @@ def plot_confusion_heatmap(cm_df, output_image_path):
 def plot_classification_report_heatmap(report_df, classes, output_image_path):
     """
     Creates and saves a heatmap for the classification report.
-    X-axis: metrics (precision, recall, f1-score in that order)
-    Y-axis: classes.
     """
-    # Create a DataFrame with classes as rows and metrics as columns.
+    # subset only the three columns in the specified class order
     metrics_df = report_df.loc[classes, ["precision", "recall", "f1-score"]]
+    
     plt.figure(figsize=(10, 6))
-    ax = sns.heatmap(metrics_df, annot=True, fmt=".2f", cmap="RdYlBu", cbar=True)
-    plt.title("Classification Report Metrics Heatmap")
-    plt.xlabel("Metrics", fontweight='bold')
-    plt.ylabel("Classes", fontweight='bold')
+    ax = sns.heatmap(
+        metrics_df,
+        annot=True,
+        fmt=".2f",
+        cmap="RdYlBu",
+        cbar=True
+    )
+
+    ax.set_xticklabels(
+        ax.get_xticklabels(),
+        fontsize=12,
+        fontweight='bold'
+    )
+
+    ax.set_yticklabels(
+        ax.get_yticklabels(),
+        fontsize=12
+    )
+
+
+    ax.set_xlabel("Metrics", fontsize=14, fontweight='bold')
+    ax.set_ylabel("Classes", fontsize=14, fontweight='bold')
+
+
+    plt.title("Classification Report", fontsize=16, fontweight='bold')
+
     plt.tight_layout()
     plt.savefig(output_image_path, dpi=300)
     plt.show()
@@ -154,10 +196,10 @@ if __name__ == '__main__':
     wks_prj = r'Q:\projects\GeoBC\Satelite_Projects\Foundational_LandClass\data\accuracy_assessment'
     gdb_pts = os.path.join(wks_prj, 'evaluation_data.gdb')
     
-    points_fp = os.path.join(gdb_pts, 'ground_truth_points_T6')
+    points_fp = os.path.join(gdb_pts, 'ground_truth_points_ALL')
     raster_fp = os.path.join(wks, 'classification', 'mosaic_assessment', 'mosaic_acc_sieve_thresh25_connect4.tif')
     
-    class_id_colname = 'CLASS_ID_PASS1'
+    class_id_colname = 'CLASS_ID_PASS2'
 
 
     # Load evaluation points.
