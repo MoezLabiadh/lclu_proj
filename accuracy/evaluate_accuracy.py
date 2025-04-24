@@ -144,18 +144,18 @@ def plot_classification_report_heatmap(report_df, classes, output_image_path):
 
     ax.set_xticklabels(
         ax.get_xticklabels(),
-        fontsize=12,
+        fontsize=11,
         fontweight='bold'
     )
 
     ax.set_yticklabels(
         ax.get_yticklabels(),
-        fontsize=12
+        fontsize=11
     )
 
 
-    ax.set_xlabel("Metrics", fontsize=14, fontweight='bold')
-    ax.set_ylabel("Classes", fontsize=14, fontweight='bold')
+    ax.set_xlabel("Metrics", fontsize=12, fontweight='bold')
+    ax.set_ylabel("Classes", fontsize=12, fontweight='bold')
 
 
     plt.title("Classification Report", fontsize=16, fontweight='bold')
