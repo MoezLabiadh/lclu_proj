@@ -235,7 +235,6 @@ function getMODISburned(img, aoi) {
   return img.addBands([burnedBinary]);
 }
 
-
 function getEsriLC(img, aoi) {
   function remapper(image) {
     var remapped = image.remap([1, 2, 4, 5, 7, 8, 9, 10, 11],
@@ -344,8 +343,8 @@ var allMosaic = getVIIRSradiance(allMosaic,
 
 var allMosaic = getMODISburned (allMosaic, AOI_BC);
 
-var allMosaic = getDwLC(allMosaic, AOI_BC);  
-var allMosaic =  getEsriLC(allMosaic, AOI_BC);
+//var allMosaic = getDwLC(allMosaic, AOI_BC);  
+//var allMosaic =  getEsriLC(allMosaic, AOI_BC);
 
 print('All features Mosaic:', allMosaic);
 
